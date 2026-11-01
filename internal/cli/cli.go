@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
+	"github.com/tyrantkhan/claude-artifact-helper/internal/install"
 	"github.com/tyrantkhan/claude-artifact-helper/internal/mcpserver"
 )
 
@@ -34,6 +37,8 @@ type Env struct {
 	Environ func() []string
 	// Serve runs the MCP server on stdin and stdout. Nil uses the real stdio transport.
 	Serve func(ctx context.Context, s *mcp.Server) error
+	// Install is how install and uninstall reach the hosts. Nil uses the real home directory, binary and PATH.
+	Install *install.Env
 }
 
 type command struct {
@@ -54,6 +59,8 @@ func commands() []command {
 		{"resolve", "Mark a comment thread resolved", resolveHelp, cmdResolve},
 		{"share", "Share an artifact with the organization or named people in it", shareHelp, cmdShare},
 		{"doctor", "Check that Claude Code is installed and signed in", doctorHelp, cmdDoctor},
+		{"install", "Register the MCP server and the skill with Claude Code, Codex, Cursor and Gemini CLI", installHelp, cmdInstall},
+		{"uninstall", "Remove what install registered", uninstallHelp, cmdUninstall},
 	}
 }
 
@@ -101,7 +108,7 @@ Usage: claude-artifact-helper <command> [flags]
 
 `)
 	for _, c := range commands() {
-		fmt.Fprintf(w, "  %-9s %s\n", c.name, c.summary)
+		fmt.Fprintf(w, "  %-10s %s\n", c.name, c.summary)
 	}
 	fmt.Fprint(w, `
 Every command prints one JSON object. A refusal has "ok": false and an "error" with "code", "message" and "fix".
@@ -564,4 +571,93 @@ func cmdDoctor(env *Env, args []string) error {
 		return err
 	}
 	return writeJSON(env, "doctor", h)
+}
+
+const installHelp = `Usage: claude-artifact-helper install [claude|codex|cursor|gemini ...] [--mcp-only | --skill-only]
+
+Register this binary as the "claude-artifact-helper" MCP server with each agent host, and write the
+claude-artifact-helper skill where the host reads skills, so the agent knows when and how to use the tools.
+Without host names, every host found on this machine is set up and the others are skipped; a host named
+explicitly is set up even when its command is not found.
+
+  claude   claude mcp add --scope user  and  ~/.claude/skills/claude-artifact-helper/SKILL.md
+  codex    codex mcp add                and  ~/.agents/skills/claude-artifact-helper/SKILL.md
+  cursor   ~/.cursor/mcp.json           and  ~/.cursor/skills/claude-artifact-helper/SKILL.md
+  gemini   gemini mcp add --scope user  and  ~/.gemini/skills/claude-artifact-helper/SKILL.md
+
+Run it again after moving the binary or updating it, so the registered path and the skill stay current.
+Claude Code users can install the plugin instead (see the README), which brings the same server and skill
+plus a SessionStart hook.
+
+Result:
+  {"ok": true, "command": "install", "self": "/usr/local/bin/claude-artifact-helper",
+   "hosts": [{"host": "claude", "mcp": "added", "skill": "/home/me/.claude/skills/claude-artifact-helper/SKILL.md"},
+             {"host": "codex", "mcp": "skipped: not found on this machine", "skill": "skipped: not found on this machine"}]}
+`
+
+const uninstallHelp = `Usage: claude-artifact-helper uninstall [claude|codex|cursor|gemini ...] [--mcp-only | --skill-only]
+
+Unregister the MCP server from each host and remove the skill that install wrote. Without host names, every
+host found on this machine is cleaned up.
+
+Result:
+  {"ok": true, "command": "uninstall",
+   "hosts": [{"host": "claude", "mcp": "removed", "skill": "/home/me/.claude/skills/claude-artifact-helper"}]}
+`
+
+func cmdInstall(env *Env, args []string) error {
+	return hostsCmd(env, "install", installHelp, args, install.Install)
+}
+func cmdUninstall(env *Env, args []string) error {
+	return hostsCmd(env, "uninstall", uninstallHelp, args, install.Uninstall)
+}
+
+func hostsCmd(env *Env, name, help string, args []string, do func(context.Context, install.Env, install.Options) ([]install.HostResult, error)) error {
+	fs := newFlags(env, name, help)
+	var opts install.Options
+	fs.BoolVar(&opts.MCP, "mcp-only", false, "only the MCP server registration")
+	fs.BoolVar(&opts.Skill, "skill-only", false, "only the skill")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if opts.MCP && opts.Skill {
+		return badArgs(name, "pass --mcp-only or --skill-only, not both")
+	}
+	opts.Hosts = pos
+	ienv, err := installEnv(env)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signalContext()
+	defer stop()
+	results, err := do(ctx, ienv, opts)
+	if err != nil {
+		return err
+	}
+	return writeJSON(env, name, map[string]any{"self": ienv.Self, "hosts": results})
+}
+
+func installEnv(env *Env) (install.Env, error) {
+	if env.Install != nil {
+		return *env.Install, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return install.Env{}, fmt.Errorf("finding the home directory: %w", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return install.Env{}, fmt.Errorf("finding this binary: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	return install.Env{Home: home, Self: self, LookPath: exec.LookPath,
+		Run: func(ctx context.Context, name string, args ...string) (string, error) {
+			cmd := exec.CommandContext(ctx, name, args...)
+			cmd.Stdin = strings.NewReader("")
+			out, err := cmd.CombinedOutput()
+			return string(out), err
+		}}, nil
 }

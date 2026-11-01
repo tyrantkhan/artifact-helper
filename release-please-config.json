@@ -4,7 +4,14 @@
       "release-type": "go",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
-      "extra-files": ["internal/cli/cli.go"]
+      "extra-files": [
+        "internal/cli/cli.go",
+        { "type": "json", "path": ".claude-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": ".codex-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": ".cursor-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "gemini-extension.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "package.json", "jsonpath": "$.version" }
+      ]
     }
   },
   "changelog-sections": [

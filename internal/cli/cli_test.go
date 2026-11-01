@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/tyrantkhan/claude-artifact-helper/internal/install"
 )
 
 const (
@@ -259,5 +262,77 @@ func TestServeRunsTheMCPServer(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "MCP server on stdio (model opus)") {
 		t.Fatalf("stderr = %q", errb.String())
+	}
+}
+
+func TestInstallAndUninstall(t *testing.T) {
+	home := t.TempDir()
+	var ran []string
+	ienv := &install.Env{Home: home, Self: "/opt/bin/cah",
+		LookPath: func(name string) (string, error) {
+			if name == "claude" {
+				return "/usr/bin/claude", nil
+			}
+			return "", errors.New("not found")
+		},
+		Run: func(_ context.Context, name string, args ...string) (string, error) {
+			ran = append(ran, name+" "+strings.Join(args, " "))
+			return "", nil
+		}}
+	do := func(args ...string) (int, map[string]any) {
+		var out bytes.Buffer
+		e := &Env{Args: args, Stdin: strings.NewReader(""), Stdout: &out, Stderr: io.Discard,
+			Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Install: ienv}
+		return Main(e), result(t, out.String())
+	}
+	code, res := do("install")
+	if code != 0 || res["self"] != "/opt/bin/cah" {
+		t.Fatalf("exit %d: %v", code, res)
+	}
+	hosts := res["hosts"].([]any)
+	if len(hosts) != 4 || hosts[0].(map[string]any)["mcp"] != "added" || !strings.HasPrefix(hosts[1].(map[string]any)["mcp"].(string), "skipped") {
+		t.Fatalf("hosts = %v", hosts)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "claude-artifact-helper", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(ran, "\n"), "claude mcp add --scope user claude-artifact-helper -- /opt/bin/cah serve") {
+		t.Fatalf("ran = %v", ran)
+	}
+	code, res = do("install", "cursor", "--skill-only")
+	if code != 0 || res["hosts"].([]any)[0].(map[string]any)["mcp"] != "skipped: --skill-only" {
+		t.Fatalf("exit %d: %v", code, res)
+	}
+	code, res = do("install", "--mcp-only", "--skill-only")
+	if code != 1 || res["error"].(map[string]any)["code"] != "invalid-args" {
+		t.Fatalf("exit %d: %v", code, res)
+	}
+	code, res = do("install", "emacs")
+	if code != 1 || res["error"].(map[string]any)["code"] != "invalid-args" {
+		t.Fatalf("exit %d: %v", code, res)
+	}
+	code, res = do("uninstall", "claude")
+	if code != 0 || res["hosts"].([]any)[0].(map[string]any)["mcp"] != "removed" {
+		t.Fatalf("exit %d: %v", code, res)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "claude-artifact-helper")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the skill is still there")
+	}
+}
+
+func TestVersionMatchesEveryManifest(t *testing.T) {
+	for _, p := range []string{".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".cursor-plugin/plugin.json",
+		"gemini-extension.json", "package.json"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m struct{ Version string }
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if m.Version != Version {
+			t.Errorf("%s has version %q, the CLI is %q", p, m.Version, Version)
+		}
 	}
 }

@@ -64,3 +64,14 @@ jobs:
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+
+  # After GoReleaser, so the listing never offers a plugin whose binary is not out yet.
+  plugin-branch:
+    name: Plugin branch
+    needs: [release-please, goreleaser]
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/plugin-branch.yml
+    with:
+      ref: ${{ needs.release-please.outputs.tag_name }}

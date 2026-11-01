@@ -45,23 +45,49 @@ claude-artifact-helper doctor
 
 On a machine without a browser, run `claude setup-token` on a machine that has one and set the token it prints as `CLAUDE_CODE_OAUTH_TOKEN` in the MCP server's environment.
 
-## Add the server to your agent
+## Teach your agent
 
-The server is launched as `claude-artifact-helper serve` and speaks MCP over stdin and stdout.
+One command registers the MCP server with every agent host found on this machine and writes the skill, [`skills/claude-artifact-helper/SKILL.md`](skills/claude-artifact-helper/SKILL.md), where each host reads skills. The skill tells the agent when to publish, how to iterate on a page, and the rules for comments and sharing.
+
+```sh
+claude-artifact-helper install            # every host on this machine
+claude-artifact-helper install codex      # one host; also: claude, cursor, gemini
+claude-artifact-helper install --skill-only
+claude-artifact-helper uninstall
+```
+
+It prints what it did per host. Run it again after updating or moving the binary. The plugins below bring the same server and skill, plus a `SessionStart` hook that nudges the agent toward the tools even when the host lists the skill without its description.
+
+<details>
+<summary>Claude Code</summary>
+
+Claude Code publishes artifacts with its own Artifact tool when the account can; the plugin is for sessions where that tool is missing, and brings the skill and hook either way.
+
+```sh
+claude plugin marketplace add tyrantkhan/claude-artifact-helper
+claude plugin install claude-artifact-helper@claude-artifact-helper
+```
+
+Or without the plugin: `claude-artifact-helper install claude`.
+
+</details>
 
 <details>
 <summary>Codex</summary>
 
 ```sh
-codex mcp add claude-artifact-helper -- claude-artifact-helper serve
+codex plugin marketplace add tyrantkhan/claude-artifact-helper
+codex plugin add claude-artifact-helper@claude-artifact-helper
 ```
+
+Or without the plugin: `claude-artifact-helper install codex`, which runs `codex mcp add` and writes the skill to `~/.agents/skills/`.
 
 </details>
 
 <details>
 <summary>Cursor</summary>
 
-In `~/.cursor/mcp.json` (or the project's `.cursor/mcp.json`):
+`claude-artifact-helper install cursor` adds the server to `~/.cursor/mcp.json` and the skill to `~/.cursor/skills/`. By hand, the entry is:
 
 ```json
 {
@@ -80,8 +106,21 @@ In `~/.cursor/mcp.json` (or the project's `.cursor/mcp.json`):
 <summary>Gemini CLI</summary>
 
 ```sh
-gemini mcp add claude-artifact-helper claude-artifact-helper serve
+gemini extensions install https://github.com/tyrantkhan/claude-artifact-helper
 ```
+
+Or without the extension: `claude-artifact-helper install gemini`.
+
+</details>
+
+<details>
+<summary>Pi, and other Agent Skills tools</summary>
+
+```sh
+pi install git:github.com/tyrantkhan/claude-artifact-helper
+```
+
+Or copy the skill into a directory your tool discovers skills from, such as `~/.agents/skills/`, and add the server (command `claude-artifact-helper`, arguments `["serve"]`, transport stdio) to its MCP configuration.
 
 </details>
 
@@ -104,24 +143,13 @@ In `claude_desktop_config.json`:
 </details>
 
 <details>
-<summary>Claude Code</summary>
-
-Claude Code publishes artifacts with its own Artifact tool when the account can; the server is for sessions where that tool is missing.
-
-```sh
-claude mcp add claude-artifact-helper -- claude-artifact-helper serve
-```
-
-</details>
-
-<details>
 <summary>Any other MCP client</summary>
 
 Command `claude-artifact-helper`, arguments `["serve"]`, transport stdio. Put configuration in the server's environment (below).
 
 </details>
 
-If the binary is not on the PATH the client starts servers with, give its full path as the command.
+If the binary is not on the PATH the client starts servers with, give its full path as the command; `install` registers the binary's own absolute path.
 
 ## Tools
 
@@ -160,6 +188,7 @@ claude-artifact-helper reply https://claude.ai/artifact/<id> <thread id> --text 
 claude-artifact-helper resolve https://claude.ai/artifact/<id> <thread id>
 claude-artifact-helper share https://claude.ai/artifact/<id> --people sam@example.com --access view --allow-share
 claude-artifact-helper doctor
+claude-artifact-helper install
 claude-artifact-helper help <command>
 ```
 

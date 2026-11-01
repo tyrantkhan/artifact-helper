@@ -43,4 +43,4 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: shellcheck
-        run: shellcheck -s sh install.sh
+        run: shellcheck -s sh install.sh hooks/session-start .github/scripts/plugin-files.sh

@@ -1,0 +1,68 @@
+name: Plugin branch
+
+# Publishes the Claude Code plugin's own files, as of a release tag, to the plugin branch. The plugin directory
+# scans that branch instead of main, so it sees only what the plugin ships, and the listing moves only once a
+# release's binaries are out. The release workflow calls this. Run by hand, it MAY publish another ref, such as
+# main when the skill has not changed since the last release.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or branch to publish; the latest release when empty
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plugin-branch
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+        run: |
+          if [ -z "$REF" ]; then
+            REF=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+      - name: Collect the plugin's files
+        run: .github/scripts/plugin-files.sh "$RUNNER_TEMP/plugin"
+      - name: Commit them to the plugin branch
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          if git ls-remote --exit-code --heads origin plugin >/dev/null; then
+            git fetch --depth=1 origin plugin
+            git switch -c plugin FETCH_HEAD
+          else
+            git switch --orphan plugin
+          fi
+          git rm -rq --ignore-unmatch .
+          git clean -fdxq
+          cp -Rp "$RUNNER_TEMP/plugin/." .
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The plugin branch already matches $REF."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "claude-artifact-helper $REF"
+          git push origin plugin

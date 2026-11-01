@@ -1,0 +1,14 @@
+{
+  "name": "claude-artifact-helper",
+  "displayName": "Claude artifact helper",
+  "version": "0.1.0",
+  "description": "Publish, edit, share and answer comments on claude.ai artifacts from any agent, through the Claude subscription already signed in on the machine.",
+  "author": {
+    "name": "tyrantkhan"
+  },
+  "repository": "https://github.com/tyrantkhan/claude-artifact-helper",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks-cursor.json",
+  "mcpServers": "./.mcp.json",
+  "license": "MIT"
+}
