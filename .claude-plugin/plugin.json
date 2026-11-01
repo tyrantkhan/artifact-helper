@@ -6,12 +6,12 @@
     "name": "tyrantkhan",
     "url": "https://tyrantkhan.github.io"
   },
-  "homepage": "https://github.com/tyrantkhan/artifact-helper",
-  "repository": "https://github.com/tyrantkhan/artifact-helper",
-  "documentationUrl": "https://github.com/tyrantkhan/artifact-helper#readme",
-  "supportUrl": "https://github.com/tyrantkhan/artifact-helper/issues",
-  "privacyPolicyUrl": "https://github.com/tyrantkhan/artifact-helper/blob/main/PRIVACY.md",
-  "termsOfServiceUrl": "https://github.com/tyrantkhan/artifact-helper/blob/main/LICENSE",
+  "homepage": "https://github.com/tyrantkhan/claude-artifact-helper",
+  "repository": "https://github.com/tyrantkhan/claude-artifact-helper",
+  "documentationUrl": "https://github.com/tyrantkhan/claude-artifact-helper#readme",
+  "supportUrl": "https://github.com/tyrantkhan/claude-artifact-helper/issues",
+  "privacyPolicyUrl": "https://github.com/tyrantkhan/claude-artifact-helper/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/tyrantkhan/claude-artifact-helper/blob/main/LICENSE",
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
   "keywords": [

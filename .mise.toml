@@ -4,7 +4,7 @@ golangci-lint = "latest"
 lefthook = "latest"
 
 [vars]
-ldflags = '-X github.com/tyrantkhan/artifact-helper/internal/cli.Version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)'
+ldflags = '-X github.com/tyrantkhan/claude-artifact-helper/internal/cli.Version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)'
 
 [tasks.setup]
 description = "Install the tools above and the git hooks"
