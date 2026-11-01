@@ -1,0 +1,66 @@
+version: 2
+
+project_name: claude-artifact-helper
+
+builds:
+  - main: ./cmd/claude-artifact-helper
+    binary: claude-artifact-helper
+    ldflags:
+      - -s -w
+      - -X github.com/tyrantkhan/claude-artifact-helper/internal/cli.Version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: tyrantkhan
+    name: claude-artifact-helper
+
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      sign:
+        certificate: "{{.Env.MACOS_SIGN_P12}}"
+        password: "{{.Env.MACOS_SIGN_PASSWORD}}"
+      notarize:
+        issuer_id: "{{.Env.MACOS_NOTARY_ISSUER_ID}}"
+        key_id: "{{.Env.MACOS_NOTARY_KEY_ID}}"
+        key: "{{.Env.MACOS_NOTARY_KEY}}"
+        wait: true
+        timeout: 20m
+
+homebrew_casks:
+  - name: claude-artifact-helper
+    binaries:
+      - claude-artifact-helper
+    directory: Casks
+    repository:
+      owner: tyrantkhan
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    url:
+      template: "https://github.com/tyrantkhan/claude-artifact-helper/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: "https://github.com/tyrantkhan/claude-artifact-helper"
+    description: "Publish claude.ai artifacts from any MCP client through your Claude subscription"
