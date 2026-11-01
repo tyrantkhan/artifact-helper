@@ -1,5 +1,5 @@
-// Package cli is the artifact-helper command line: the MCP server, and each of its tools as a one-shot
-// command that prints one JSON object.
+// Package cli is the artifact-helper command line: each operation is a one-shot command that prints one JSON
+// object, for Claude to run from its shell.
 package cli
 
 import (
@@ -10,18 +10,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/tyrantkhan/artifact-helper/internal/headless"
-	"github.com/tyrantkhan/artifact-helper/internal/install"
-	"github.com/tyrantkhan/artifact-helper/internal/mcpserver"
 	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
 	"github.com/tyrantkhan/artifact-helper/skills"
 )
@@ -37,11 +31,7 @@ type Env struct {
 	Stderr  io.Writer
 	Getenv  func(string) string
 	Environ func() []string
-	// Serve runs the MCP server on stdin and stdout. Nil uses the real stdio transport.
-	Serve func(ctx context.Context, s *mcp.Server) error
-	// Install is how mcp add and remove reach the hosts. Nil uses the real home directory, binary and PATH.
-	Install *install.Env
-	// Skills is how the skills commands see the machine. Nil uses the real home directory, cwd and PATH.
+	// Skills is how install and uninstall see the machine. Nil uses the real home directory and cwd.
 	Skills *skillinstall.Env
 }
 
@@ -54,7 +44,6 @@ type command struct {
 
 func commands() []command {
 	return []command{
-		{"serve", "Run the MCP server on stdin and stdout; this is what an MCP client launches", serveHelp, cmdServe},
 		{"publish", "Publish one file as an artifact and print its link", publishHelp, cmdPublish},
 		{"read", "Save an artifact's page (or another of its files) to a local file", readHelp, cmdRead},
 		{"edit", "Apply old/new replacements to an artifact's page and republish it", editHelp, cmdEdit},
@@ -64,8 +53,8 @@ func commands() []command {
 		{"share", "Share an artifact with the organization or named people in it", shareHelp, cmdShare},
 		{"doctor", "Check that Claude Code is installed and signed in", doctorHelp, cmdDoctor},
 		{"get-skill", "Print the version-matched guide the installed skill stub loads", getSkillHelp, cmdGetSkill},
-		{"install", "Register the MCP server and install the skill for every agent found on this machine", installHelp, cmdInstall},
-		{"uninstall", "Undo install: unregister the server and remove the skill copies it wrote", uninstallHelp, cmdUninstall},
+		{"install", "Install the skill into Claude Code's skills folder, without the plugin", installHelp, cmdInstall},
+		{"uninstall", "Remove the skill copy install wrote", uninstallHelp, cmdUninstall},
 	}
 }
 
@@ -109,9 +98,9 @@ func Main(env *Env) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `artifact-helper: publish, read, edit and answer comments on claude.ai artifacts through your Claude
-subscription, from any MCP client or shell. Under the cover each command runs Claude Code headlessly (claude -p)
-and lets its Artifact tool do the work.
+	fmt.Fprint(w, `artifact-helper: publish, read, edit, share and answer comments on claude.ai artifacts through your Claude
+subscription, from Claude Code's shell. Under the cover each command runs Claude Code headlessly (claude -p) and
+lets its Artifact tool do the work.
 
 Usage: artifact-helper <command> [flags]
 
@@ -143,7 +132,7 @@ func writeError(env *Env, name string, err error) {
 	}
 	b, _ := json.Marshal(map[string]any{"ok": false, "command": name, "error": rf})
 	fmt.Fprintln(env.Stdout, string(b))
-	if rf.Code == "error" || name == "serve" {
+	if rf.Code == "error" {
 		fmt.Fprintln(env.Stderr, "artifact-helper "+name+": "+err.Error())
 	}
 }
@@ -254,55 +243,10 @@ func signalContext() (context.Context, context.CancelFunc) {
 
 const optionFlags = `[--claude <path>] [--model <name>] [--timeout <duration>] [--max-budget-usd <n>] [--verbose] [--allow-share]`
 
-const serveHelp = `Usage: artifact-helper serve ` + optionFlags + `
-
-Run the MCP server over stdio. An MCP client launches this command and talks JSON-RPC on its stdin and stdout;
-logs go to stderr. The flags override the ARTIFACT_HELPER_* environment variables.
-
-Tools (each takes the artifact's claude.ai link as "url" where one is needed):
-  publish_artifact  {"file_path", "title"?, "description"?, "icon"?, "url"?} -> {"url", "updated", "turns", "cost_usd"}
-  read_artifact     {"url", "path"?, "out_dir"?}                           -> {"saved_path", "path"}
-  edit_artifact     {"url", "edits": [{"old_str", "new_str"}], "file_path"?} -> {"url", "path", "applied"}
-  read_comments     {"url", "thread_id"?, "cursor"?}                       -> {"threads", "raw", "more_cursor"?}
-  reply_to_comment  {"url", "thread_id", "text", "resolve"?}               -> {"replied", "resolved", "message"}
-  resolve_comment   {"url", "thread_id"}                                   -> {"replied", "resolved", "message"}
-  share_artifact    {"url", "mode": "org"|"people", "people"?, "access"?}  -> {"shared", "message"}  (needs --allow-share)
-  check_setup       {}                                                     -> {"claude", "version", "loggedIn", ...}
-
-A failed call returns isError with {"code", "message", "fix"} as its text.
-`
-
-func cmdServe(env *Env, args []string) error {
-	opts, _, err := setup(env, "serve", serveHelp, args, 0, nil)
-	if err != nil {
-		return err
-	}
-	ctx, stop := signalContext()
-	defer stop()
-	s := mcpserver.New(opts, Version)
-	fmt.Fprintf(env.Stderr, "artifact-helper %s: MCP server on stdio (model %s)\n", Version, orDefault(opts.Model, headless.DefaultModel))
-	serve := env.Serve
-	if serve == nil {
-		serve = func(ctx context.Context, s *mcp.Server) error { return s.Run(ctx, &mcp.StdioTransport{}) }
-	}
-	if err := serve(ctx, s); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("serving MCP: %w", err)
-	}
-	return nil
-}
-
-func orDefault(v, d string) string {
-	if v == "" {
-		return d
-	}
-	return v
-}
-
 const publishHelp = `Usage: artifact-helper publish <file> [--title <text>] [--description <text>] [--icon <word>] [--url <link>]
                                       ` + optionFlags + `
 
-Publish one .html (or .md) file as a claude.ai artifact and print its link. The same publish the MCP tool does,
-for shells and agents that run commands instead of MCP tools.
+Publish one .html (or .md) file as a claude.ai artifact and print its link.
 
 --title is the fallback title when the page has no <title>; keep it the same across republishes.
 --description is one sentence for the gallery card. --icon is one generic word for the browser-tab icon
@@ -634,8 +578,6 @@ func summarize(plan *skillinstall.Plan, outs []skillinstall.Outcome) string {
 				counts["failed"]++
 			case status == "changed":
 				counts["changed meanwhile"]++
-			case status == "skipped":
-				counts["skipped"]++
 			case op.Kind == skillinstall.Leave:
 				counts["left alone"]++
 				if t := skillinstall.ReasonText[op.Reason]; t != "" && !strings.Contains(strings.Join(left, ","), t) {
@@ -647,14 +589,12 @@ func summarize(plan *skillinstall.Plan, outs []skillinstall.Outcome) string {
 				counts["written"]++
 			case op.Kind == skillinstall.Update:
 				counts["updated"]++
-			case op.Kind == skillinstall.Link:
-				counts["linked"]++
 			case op.Kind == skillinstall.Replace:
 				counts["replaced"]++
 			}
 		}
 		var parts []string
-		for _, k := range []string{"written", "updated", "linked", "replaced", "unchanged", "left alone", "skipped", "changed meanwhile", "failed"} {
+		for _, k := range []string{"written", "updated", "replaced", "unchanged", "left alone", "changed meanwhile", "failed"} {
 			if n := counts[k]; n > 0 {
 				p := fmt.Sprintf("%d %s", n, k)
 				if k == "left alone" && len(left) > 0 {
@@ -688,131 +628,66 @@ func skillsEnv(env *Env) (skillinstall.Env, error) {
 	if err != nil {
 		return skillinstall.Env{}, fmt.Errorf("finding the current directory: %w", err)
 	}
-	return skillinstall.Env{Home: home, Cwd: cwd, Getenv: env.Getenv, LookPath: exec.LookPath, Now: time.Now}, nil
+	return skillinstall.Env{Home: home, Cwd: cwd, Getenv: env.Getenv, Now: time.Now}, nil
 }
 
-func installEnv(env *Env) (install.Env, error) {
-	if env.Install != nil {
-		return *env.Install, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return install.Env{}, fmt.Errorf("finding the home directory: %w", err)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return install.Env{}, fmt.Errorf("finding this binary: %w", err)
-	}
-	if resolved, err := filepath.EvalSymlinks(self); err == nil {
-		self = resolved
-	}
-	return install.Env{Home: home, Self: self, LookPath: exec.LookPath,
-		Run: func(ctx context.Context, name string, args ...string) (string, error) {
-			cmd := exec.CommandContext(ctx, name, args...)
-			cmd.Stdin = strings.NewReader("")
-			out, err := cmd.CombinedOutput()
-			return string(out), err
-		}}, nil
-}
+const installHelp = `Usage: artifact-helper install [--local] [--force] [--dry-run]
 
-const installHelp = `Usage: artifact-helper install [--mcp-only | --skill-only] [--force] [--dry-run]
+Install the skill into Claude Code's skills folder (~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills), for a
+machine without the plugin. The skill is a thin stub that loads the version-matched guide with
+"artifact-helper get-skill", so run install again only after the stub itself changes; the guide follows the
+binary on its own.
 
-Set this machine up: register this binary as the "artifact-helper" MCP server with every agent host
-found here, and install the skill for every agent found here. Run it again after moving or updating the binary.
-
-The server is registered through each host's own command, or its config file:
-  claude   claude mcp add --scope user artifact-helper -- <this binary> serve
-  codex    codex mcp add artifact-helper -- <this binary> serve
-  cursor   an entry in ~/.cursor/mcp.json
-  gemini   gemini mcp add --scope user artifact-helper <this binary> serve
-
-The skill is installed the way Orca's installer does it: the stub goes to the shared ~/.agents/skills folder
-(which Codex reads), and each other agent's skills folder gets a link to it (Claude Code ~/.claude/skills,
-Cursor ~/.cursor/skills, Gemini CLI ~/.gemini/skills). Only copies this tool wrote and nobody changed are
-rewritten; a copy you changed, or a different skill with the same name, is left alone and reported. --force
-replaces it after moving it to a backup under ~/.agents/.artifact-helper-skill-backups. --dry-run
-prints the skill plan without writing or registering anything.
+Only a copy this tool wrote and nobody changed is rewritten. A copy you changed, or a different skill with the
+same name, is left alone and reported; --force replaces it after moving it to a backup folder beside the
+skills folder. --local installs into the current project's .claude/skills instead. --dry-run prints the plan
+without writing.
 
 Result:
-  {"ok": true, "command": "install", "self": "/usr/local/bin/artifact-helper",
-   "hosts": [{"host": "claude", "server": "added"}, {"host": "codex", "server": "skipped: not found on this machine"}],
-   "plan": {"scope": "global", "skills": [{"name": "artifact-helper", "ops": [
-      {"kind": "write", "path": "/home/me/.agents/skills/artifact-helper", "role": "shared"},
-      {"kind": "link", "path": "/home/me/.claude/skills/artifact-helper", "role": "agent", "agents": ["claude"]}]}]},
+  {"ok": true, "command": "install", "plan": {"scope": "global", "root": "/home/me/.claude/skills", "planDigest": "...",
+     "skills": [{"name": "artifact-helper", "digest": "...", "ops": [{"kind": "write", "path": "/home/me/.claude/skills/artifact-helper"}]}]},
    "outcomes": [{"name": "artifact-helper", "status": "ran", "ops": [{"path": "...", "kind": "write", "status": "done"}]}],
-   "summary": "artifact-helper: 1 written · 1 linked"}
+   "summary": "artifact-helper: 1 written"}
 
-The exit code is 1 when a skill operation failed or its path changed while the run was planned; copies left
-alone are only reported.
+The exit code is 1 when the write failed or the folder changed while the run was planned; a copy left alone is
+only reported.
 `
 
-const uninstallHelp = `Usage: artifact-helper uninstall [--mcp-only | --skill-only]
+const uninstallHelp = `Usage: artifact-helper uninstall [--local]
 
-Undo install: unregister the server from every host found here, and remove the skill copies install wrote
-(links to the shared copy, and untouched copies of ours). A copy you changed is left and reported.
+Remove the skill copy install wrote. A copy you changed is left and reported.
 
 Result:
-  {"ok": true, "command": "uninstall", "self": "...", "hosts": [{"host": "claude", "server": "removed"}],
-   "skills": [{"name": "artifact-helper", "path": "/home/me/.claude/skills/artifact-helper", "state": "removed"}]}
+  {"ok": true, "command": "uninstall", "skills": [{"name": "artifact-helper", "path": "/home/me/.claude/skills/artifact-helper", "state": "removed"}]}
 `
 
 func cmdInstall(env *Env, args []string) error {
 	fs := newFlags(env, "install", installHelp)
-	mcpOnly := fs.Bool("mcp-only", false, "only register the MCP server")
-	skillOnly := fs.Bool("skill-only", false, "only install the skill")
-	force := fs.Bool("force", false, "replace skill copies that would be left alone, after a backup")
-	dry := fs.Bool("dry-run", false, "print the skill plan without writing or registering anything")
+	var opts skillinstall.Options
+	fs.BoolVar(&opts.Local, "local", false, "the current project's .claude/skills instead of the home directory's")
+	fs.BoolVar(&opts.Force, "force", false, "replace a copy that would be left alone, after a backup")
+	dry := fs.Bool("dry-run", false, "print the plan without writing")
 	if pos, err := parse(fs, args); err != nil {
 		return err
 	} else if len(pos) > 0 {
 		return badArgs("install", "install takes no arguments")
 	}
-	if *mcpOnly && *skillOnly {
-		return badArgs("install", "pass --mcp-only or --skill-only, not both")
-	}
-	out := map[string]any{}
-	ctx, stop := signalContext()
-	defer stop()
-	if !*skillOnly {
-		ienv, err := installEnv(env)
-		if err != nil {
-			return err
-		}
-		out["self"] = ienv.Self
-		if *dry {
-			out["hosts"] = "skipped: --dry-run"
-		} else {
-			hosts, err := install.AddServer(ctx, ienv, nil)
-			if err != nil {
-				return err
-			}
-			out["hosts"] = hosts
-		}
-	}
-	failed := false
-	if !*mcpOnly {
-		senv, err := skillsEnv(env)
-		if err != nil {
-			return err
-		}
-		plan, err := skillinstall.Make(senv, skillinstall.Options{Force: *force})
-		if err != nil {
-			return err
-		}
-		out["plan"] = plan
-		if *dry {
-			out["dryRun"] = true
-			out["summary"] = summarize(plan, nil)
-		} else {
-			outs := skillinstall.Execute(senv, plan)
-			out["outcomes"], out["summary"] = outs, summarize(plan, outs)
-			failed = skillinstall.Failed(outs)
-		}
-	}
-	if err := writeJSON(env, "install", out); err != nil {
+	senv, err := skillsEnv(env)
+	if err != nil {
 		return err
 	}
-	if failed {
+	plan, err := skillinstall.Make(senv, opts)
+	if err != nil {
+		return err
+	}
+	if *dry {
+		return writeJSON(env, "install", map[string]any{"dryRun": true, "plan": plan, "summary": summarize(plan, nil)})
+	}
+	outs := skillinstall.Execute(senv, plan)
+	if err := writeJSON(env, "install", map[string]any{"plan": plan, "outcomes": outs, "summary": summarize(plan, outs)}); err != nil {
+		return err
+	}
+	if skillinstall.Failed(outs) {
 		return &exitError{code: 1}
 	}
 	return nil
@@ -820,43 +695,23 @@ func cmdInstall(env *Env, args []string) error {
 
 func cmdUninstall(env *Env, args []string) error {
 	fs := newFlags(env, "uninstall", uninstallHelp)
-	mcpOnly := fs.Bool("mcp-only", false, "only unregister the MCP server")
-	skillOnly := fs.Bool("skill-only", false, "only remove the skill")
+	var opts skillinstall.Options
+	fs.BoolVar(&opts.Local, "local", false, "the current project's .claude/skills instead of the home directory's")
 	if pos, err := parse(fs, args); err != nil {
 		return err
 	} else if len(pos) > 0 {
 		return badArgs("uninstall", "uninstall takes no arguments")
 	}
-	if *mcpOnly && *skillOnly {
-		return badArgs("uninstall", "pass --mcp-only or --skill-only, not both")
+	senv, err := skillsEnv(env)
+	if err != nil {
+		return err
 	}
-	out := map[string]any{}
-	ctx, stop := signalContext()
-	defer stop()
-	if !*skillOnly {
-		ienv, err := installEnv(env)
-		if err != nil {
-			return err
-		}
-		hosts, err := install.RemoveServer(ctx, ienv, nil)
-		if err != nil {
-			return err
-		}
-		out["self"], out["hosts"] = ienv.Self, hosts
+	removed, err := skillinstall.Remove(senv, opts)
+	if err != nil {
+		return err
 	}
-	if !*mcpOnly {
-		senv, err := skillsEnv(env)
-		if err != nil {
-			return err
-		}
-		removed, err := skillinstall.Remove(senv, skillinstall.Options{})
-		if err != nil {
-			return err
-		}
-		if removed == nil {
-			removed = []skillinstall.Installed{}
-		}
-		out["skills"] = removed
+	if removed == nil {
+		removed = []skillinstall.Installed{}
 	}
-	return writeJSON(env, "uninstall", out)
+	return writeJSON(env, "uninstall", map[string]any{"skills": removed})
 }

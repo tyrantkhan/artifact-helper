@@ -63,4 +63,4 @@ homebrew_casks:
     url:
       template: "https://github.com/tyrantkhan/artifact-helper/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     homepage: "https://github.com/tyrantkhan/artifact-helper"
-    description: "Publish claude.ai artifacts from any MCP client through your Claude subscription"
+    description: "Publish, edit, share and answer comments on claude.ai artifacts from Claude Code"

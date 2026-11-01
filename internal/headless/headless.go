@@ -193,7 +193,7 @@ func checkURL(s string) error {
 func checkThread(s string) error {
 	if !threadID.MatchString(s) {
 		return &Refusal{Code: "invalid-thread", Message: fmt.Sprintf("%q is not a comment thread id", s),
-			Fix: "pass a thread id as read_comments lists it: a lowercase UUID"}
+			Fix: "pass a thread id as artifact-helper comments lists it: a lowercase UUID"}
 	}
 	return nil
 }
@@ -450,7 +450,7 @@ func ApplyEdits(content []byte, edits []Edit) ([]byte, error) {
 			s = strings.Replace(s, e.OldStr, e.NewStr, 1)
 		case 0:
 			return nil, &Refusal{Code: "edit-failed", Message: fmt.Sprintf("edit %d: old_str not found in the file", i+1),
-				Fix: "copy old_str exactly from the file as it now stands (read_artifact fetches the live page)"}
+				Fix: "copy old_str exactly from the file as it now stands (artifact-helper read fetches the live page)"}
 		default:
 			return nil, &Refusal{Code: "edit-failed", Message: fmt.Sprintf("edit %d: old_str occurs %d times; it must occur once", i+1, n),
 				Fix: "include more surrounding text in old_str so it matches one place"}
@@ -575,7 +575,7 @@ func Comments(ctx context.Context, opts Options, url, threadID, cursor string) (
 	}
 	if cursor != "" {
 		if strings.ContainsAny(cursor, "\"\\\n") {
-			return nil, &Refusal{Code: "invalid-args", Message: "the cursor is not one read_comments printed", Fix: "pass moreCursor from the previous result"}
+			return nil, &Refusal{Code: "invalid-args", Message: "the cursor is not one artifact-helper comments printed", Fix: "pass moreCursor from the previous result"}
 		}
 		call["cursor"] = cursor
 	}
@@ -705,7 +705,7 @@ func threadRun(ctx context.Context, opts Options, url, thread, prompt string) (*
 				Fix: "only a thread a writer has sent to Claude (replying on it with Send to Claude, or mentioning @claude) accepts replies and resolves; ask the artifact's writer to send it, then try again"}
 		}
 		return nil, &Refusal{Code: "thread-refused", Message: "the Artifact tool did not act on the thread: " + tail(msg, 2000),
-			Fix: "check the thread id with read_comments and fix what the message names"}
+			Fix: "check the thread id with artifact-helper comments and fix what the message names"}
 	}
 	return &ThreadResult{URL: url, ThreadID: thread, Replied: out.Replied, Resolved: out.Resolved, Message: out.Message, RunInfo: cr.info(opts)}, nil
 }

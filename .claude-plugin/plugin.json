@@ -14,11 +14,9 @@
   "termsOfServiceUrl": "https://github.com/tyrantkhan/artifact-helper/blob/main/LICENSE",
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
-  "mcpServers": "./.mcp.json",
   "keywords": [
     "artifacts",
     "claude-ai",
-    "mcp",
     "publish",
     "skills"
   ],

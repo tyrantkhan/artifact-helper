@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "artifact-helper": {
-      "command": "artifact-helper",
-      "args": ["serve"]
-    }
-  }
-}

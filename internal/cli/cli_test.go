@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,9 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/tyrantkhan/artifact-helper/internal/install"
 	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
 )
 
@@ -206,7 +202,6 @@ func TestRefusalsAreJSONOnStdout(t *testing.T) {
 		{[]string{"resolve", link, "nope"}, withBin, "invalid-thread"},
 		{[]string{"doctor"}, map[string]string{"ARTIFACT_HELPER_CLAUDE": "/no/such/claude"}, "no-claude"},
 		{[]string{"doctor", "extra"}, nil, "invalid-args"},
-		{[]string{"serve", "extra"}, nil, "invalid-args"},
 	}
 	for _, c := range cases {
 		code, out, _ := run(t, c.env, "", c.args...)
@@ -226,84 +221,23 @@ func TestDoctorPrintsJSON(t *testing.T) {
 	}
 }
 
-func TestServeRunsTheMCPServer(t *testing.T) {
-	bin := fakeClaude(t, map[string]string{"": ""}, "")
-	var served *mcp.Server
-	var errb bytes.Buffer
-	e := &Env{Args: []string{"serve", "--model", "opus"}, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: &errb,
-		Getenv: func(k string) string {
-			if k == "ARTIFACT_HELPER_CLAUDE" {
-				return bin
-			}
-			return ""
-		},
-		Environ: func() []string { return nil },
-		Serve: func(ctx context.Context, s *mcp.Server) error {
-			served = s
-			t1, t2 := mcp.NewInMemoryTransports()
-			if _, err := s.Connect(ctx, t1, nil); err != nil {
-				return err
-			}
-			sess, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, t2, nil)
-			if err != nil {
-				return err
-			}
-			defer sess.Close()
-			res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "check_setup", Arguments: map[string]any{}})
-			if err != nil {
-				return err
-			}
-			b, _ := json.Marshal(res.StructuredContent)
-			if !strings.Contains(string(b), `"model":"opus"`) {
-				t.Errorf("structured = %s", b)
-			}
-			return nil
-		}}
-	if code := Main(e); code != 0 || served == nil {
-		t.Fatalf("exit %d, served=%v, stderr=%s", code, served != nil, errb.String())
-	}
-	if !strings.Contains(errb.String(), "MCP server on stdio (model opus)") {
-		t.Fatalf("stderr = %q", errb.String())
-	}
-}
-
-func fakeMachine(t *testing.T) (*install.Env, *skillinstall.Env, *[]string) {
+func fakeMachine(t *testing.T) *skillinstall.Env {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("links are not made on Windows")
-	}
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var ran []string
-	lookPath := func(name string) (string, error) {
-		if name == "claude" {
-			return "/usr/bin/claude", nil
-		}
-		return "", errors.New("not found")
-	}
-	ienv := &install.Env{Home: home, Self: "/opt/bin/cah", LookPath: lookPath,
-		Run: func(_ context.Context, name string, args ...string) (string, error) {
-			ran = append(ran, name+" "+strings.Join(args, " "))
-			return "", nil
-		}}
-	senv := &skillinstall.Env{Home: home, Cwd: filepath.Join(home, "project"), Getenv: func(string) string { return "" },
-		LookPath: lookPath, Now: time.Now}
-	return ienv, senv, &ran
+	return &skillinstall.Env{Home: home, Cwd: filepath.Join(home, "project"), Getenv: func(string) string { return "" }, Now: time.Now}
 }
 
-func runMachine(t *testing.T, ienv *install.Env, senv *skillinstall.Env, stdin string, args ...string) (int, string) {
+func runMachine(t *testing.T, senv *skillinstall.Env, args ...string) (int, string) {
 	t.Helper()
 	var out bytes.Buffer
-	e := &Env{Args: args, Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: io.Discard,
-		Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Install: ienv, Skills: senv}
+	e := &Env{Args: args, Stdin: strings.NewReader(""), Stdout: &out, Stderr: io.Discard,
+		Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Skills: senv}
 	return Main(e), out.String()
 }
 
 func TestGetSkill(t *testing.T) {
 	code, out, _ := run(t, nil, "", "get-skill")
-	if code != 0 || !strings.HasPrefix(out, "# artifact-helper guide") || !strings.Contains(out, "publish_artifact") {
+	if code != 0 || !strings.HasPrefix(out, "# artifact-helper guide") || !strings.Contains(out, "artifact-helper publish") {
 		t.Fatalf("exit %d: %.80s", code, out)
 	}
 	code, out, _ = run(t, nil, "", "get-skill", "artifact-helper", "--json")
@@ -317,62 +251,61 @@ func TestGetSkill(t *testing.T) {
 }
 
 func TestInstallAndUninstall(t *testing.T) {
-	ienv, senv, ran := fakeMachine(t)
-	code, out := runMachine(t, ienv, senv, "", "install", "--dry-run")
+	senv := fakeMachine(t)
+	dir := filepath.Join(senv.Home, ".claude", "skills", "artifact-helper")
+	code, out := runMachine(t, senv, "install", "--dry-run")
 	res := result(t, out)
-	if code != 0 || res["dryRun"] != true || res["hosts"] != "skipped: --dry-run" || !strings.Contains(res["summary"].(string), "1 written") {
+	if code != 0 || res["dryRun"] != true || !strings.Contains(res["summary"].(string), "1 written") {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if _, err := os.Stat(filepath.Join(senv.Home, ".agents", "skills", "artifact-helper")); err == nil || len(*ran) != 0 {
-		t.Fatal("a dry run wrote or registered")
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("a dry run wrote")
 	}
-	code, out = runMachine(t, ienv, senv, "", "install")
+	code, out = runMachine(t, senv, "install")
 	res = result(t, out)
-	hosts := res["hosts"].([]any)
-	if code != 0 || res["self"] != "/opt/bin/cah" || len(hosts) != 4 || hosts[0].(map[string]any)["server"] != "added" || !strings.HasPrefix(hosts[1].(map[string]any)["server"].(string), "skipped") {
+	if code != 0 || res["command"] != "install" || !strings.Contains(res["summary"].(string), "1 written") || len(res["outcomes"].([]any)) != 1 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if !strings.Contains(res["summary"].(string), "1 written") || len(res["outcomes"].([]any)) != 1 {
-		t.Fatalf("summary = %v", res["summary"])
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(*ran, "\n"), "claude mcp add --scope user artifact-helper -- /opt/bin/cah serve") {
-		t.Fatalf("ran = %v", *ran)
-	}
-	for _, p := range []string{".agents/skills", ".claude/skills", ".cursor/skills"} {
-		if _, err := os.Stat(filepath.Join(senv.Home, p, "artifact-helper", "SKILL.md")); err != nil {
-			t.Errorf("%s: %v", p, err)
-		}
-	}
-	*ran = nil
-	code, out = runMachine(t, ienv, senv, "", "install", "--skill-only")
-	res = result(t, out)
-	if code != 0 || res["hosts"] != nil || len(*ran) != 0 || !strings.Contains(res["summary"].(string), "3 unchanged") {
+	code, out = runMachine(t, senv, "install")
+	if code != 0 || !strings.Contains(result(t, out)["summary"].(string), "1 unchanged") {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	code, out = runMachine(t, ienv, senv, "", "install", "--mcp-only")
-	res = result(t, out)
-	if code != 0 || res["plan"] != nil || len(*ran) == 0 {
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: artifact-helper\n---\nmine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out = runMachine(t, senv, "install")
+	if code != 0 || !strings.Contains(result(t, out)["summary"].(string), "left alone: You've changed this copy") {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	for _, args := range [][]string{{"install", "--mcp-only", "--skill-only"}, {"install", "extra"}, {"uninstall", "extra"}} {
-		code, out = runMachine(t, ienv, senv, "", args...)
+	code, out = runMachine(t, senv, "install", "--force")
+	if code != 0 || !strings.Contains(result(t, out)["summary"].(string), "1 replaced") {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	for _, args := range [][]string{{"install", "extra"}, {"uninstall", "extra"}} {
+		code, out = runMachine(t, senv, args...)
 		if code != 1 || result(t, out)["error"].(map[string]any)["code"] != "invalid-args" {
 			t.Errorf("%v: exit %d: %s", args, code, out)
 		}
 	}
-	code, out = runMachine(t, ienv, senv, "", "uninstall")
+	code, out = runMachine(t, senv, "uninstall")
 	res = result(t, out)
-	if code != 0 || res["hosts"].([]any)[0].(map[string]any)["server"] != "removed" || len(res["skills"].([]any)) != 3 || res["skills"].([]any)[0].(map[string]any)["state"] != "removed" {
+	if code != 0 || len(res["skills"].([]any)) != 1 || res["skills"].([]any)[0].(map[string]any)["state"] != "removed" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if _, err := os.Lstat(filepath.Join(senv.Home, ".claude", "skills", "artifact-helper")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("the skill link is still there")
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the skill is still there")
+	}
+	code, out = runMachine(t, senv, "uninstall")
+	if code != 0 || len(result(t, out)["skills"].([]any)) != 0 {
+		t.Fatalf("exit %d: %s", code, out)
 	}
 }
 
 func TestVersionMatchesEveryManifest(t *testing.T) {
-	for _, p := range []string{".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".cursor-plugin/plugin.json",
-		"gemini-extension.json", "package.json"} {
+	for _, p := range []string{".claude-plugin/plugin.json"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", p))
 		if err != nil {
 			t.Fatal(err)
