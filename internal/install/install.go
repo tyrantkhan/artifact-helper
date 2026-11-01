@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
 )
 
 // ServerName is the name the MCP server is registered under.

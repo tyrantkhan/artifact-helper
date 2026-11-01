@@ -6,7 +6,7 @@
   "author": {
     "name": "tyrantkhan"
   },
-  "repository": "https://github.com/tyrantkhan/claude-artifact-helper",
+  "repository": "https://github.com/tyrantkhan/artifact-helper",
   "skills": "./skills/",
   "hooks": "./hooks/hooks-cursor.json",
   "mcpServers": "./.mcp.json",

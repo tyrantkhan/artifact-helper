@@ -10,4 +10,4 @@ The only files this tool writes are the ones you ask for: a fetched page lands i
 temporary one. The headless runs are started without session persistence, so Claude Code keeps no transcript
 of them either.
 
-Questions go to [the issue tracker](https://github.com/tyrantkhan/claude-artifact-helper/issues).
+Questions go to [the issue tracker](https://github.com/tyrantkhan/artifact-helper/issues).

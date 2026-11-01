@@ -1,8 +1,8 @@
 # artifact-helper
 
-[![CI](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/ci.yml)
-[![Release](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/tyrantkhan/claude-artifact-helper)](https://github.com/tyrantkhan/claude-artifact-helper/releases/latest)
+[![CI](https://github.com/tyrantkhan/artifact-helper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/artifact-helper/actions/workflows/ci.yml)
+[![Release](https://github.com/tyrantkhan/artifact-helper/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/artifact-helper/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/tyrantkhan/artifact-helper)](https://github.com/tyrantkhan/artifact-helper/releases/latest)
 
 Publish, read, edit and answer comments on [claude.ai artifacts](https://claude.ai/code/artifacts) from any agent, through the Claude subscription you already have.
 
@@ -22,19 +22,19 @@ A call takes well under a minute and a few model turns on `sonnet` by default. O
 
 ```sh
 # Script: installs the latest release to ~/.local/bin after checking its checksum
-curl -sSL https://raw.githubusercontent.com/tyrantkhan/claude-artifact-helper/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/tyrantkhan/artifact-helper/main/install.sh | sh
 
 # Homebrew (macOS and Linux)
 brew install --cask tyrantkhan/tap/artifact-helper
 
 # mise
-mise use -g github:tyrantkhan/claude-artifact-helper
+mise use -g github:tyrantkhan/artifact-helper
 
 # Go
-go install github.com/tyrantkhan/claude-artifact-helper/cmd/artifact-helper@latest
+go install github.com/tyrantkhan/artifact-helper/cmd/artifact-helper@latest
 ```
 
-Each [release](https://github.com/tyrantkhan/claude-artifact-helper/releases) also has archives for macOS, Linux and Windows on amd64 and arm64, with a `checksums.txt`. macOS builds are signed and notarized.
+Each [release](https://github.com/tyrantkhan/artifact-helper/releases) also has archives for macOS, Linux and Windows on amd64 and arm64, with a `checksums.txt`. macOS builds are signed and notarized.
 
 You also need [Claude Code](https://claude.com/claude-code) signed in to a Claude subscription:
 
@@ -56,7 +56,7 @@ artifact-helper install              # or --mcp-only, --skill-only, --dry-run, -
 artifact-helper uninstall
 ```
 
-The skill also installs with the skills CLI, from this repository, like any Agent Skills package: `npx skills add https://github.com/tyrantkhan/claude-artifact-helper --skill artifact-helper --global`.
+The skill also installs with the skills CLI, from this repository, like any Agent Skills package: `npx skills add https://github.com/tyrantkhan/artifact-helper --skill artifact-helper --global`.
 
 The plugins below bring the same server and skill, plus a `SessionStart` hook that nudges the agent toward the tools even when the host lists the skill without its description.
 
@@ -66,7 +66,7 @@ The plugins below bring the same server and skill, plus a `SessionStart` hook th
 Claude Code publishes artifacts with its own Artifact tool when the account can; the plugin is for sessions where that tool is missing, and brings the skill and hook either way.
 
 ```sh
-claude plugin marketplace add tyrantkhan/claude-artifact-helper
+claude plugin marketplace add tyrantkhan/artifact-helper
 claude plugin install artifact-helper@artifact-helper
 ```
 
@@ -78,7 +78,7 @@ Or without the plugin: `artifact-helper install`.
 <summary>Codex</summary>
 
 ```sh
-codex plugin marketplace add tyrantkhan/claude-artifact-helper
+codex plugin marketplace add tyrantkhan/artifact-helper
 codex plugin add artifact-helper@artifact-helper
 ```
 
@@ -108,7 +108,7 @@ Or without the plugin: `artifact-helper install`, which runs `codex mcp add` and
 <summary>Gemini CLI</summary>
 
 ```sh
-gemini extensions install https://github.com/tyrantkhan/claude-artifact-helper
+gemini extensions install https://github.com/tyrantkhan/artifact-helper
 ```
 
 Or without the extension: `artifact-helper install`.
@@ -119,7 +119,7 @@ Or without the extension: `artifact-helper install`.
 <summary>Pi, and other Agent Skills tools</summary>
 
 ```sh
-pi install git:github.com/tyrantkhan/claude-artifact-helper
+pi install git:github.com/tyrantkhan/artifact-helper
 ```
 
 Or `npx skills add` as above, and add the server (command `artifact-helper`, arguments `["serve"]`, transport stdio) to the tool's MCP configuration.

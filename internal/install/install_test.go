@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
 )
 
 // fakeEnv has every host present and records the host command lines it runs.

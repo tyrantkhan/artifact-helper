@@ -19,11 +19,11 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
-	"github.com/tyrantkhan/claude-artifact-helper/internal/install"
-	"github.com/tyrantkhan/claude-artifact-helper/internal/mcpserver"
-	"github.com/tyrantkhan/claude-artifact-helper/internal/skillinstall"
-	"github.com/tyrantkhan/claude-artifact-helper/skills"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/internal/install"
+	"github.com/tyrantkhan/artifact-helper/internal/mcpserver"
+	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
+	"github.com/tyrantkhan/artifact-helper/skills"
 )
 
 // Version is this build's version. release-please bumps it; release builds also set it with -ldflags.

@@ -15,8 +15,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/install"
-	"github.com/tyrantkhan/claude-artifact-helper/internal/skillinstall"
+	"github.com/tyrantkhan/artifact-helper/internal/install"
+	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	skillguides "github.com/tyrantkhan/claude-artifact-helper/skill-guides"
+	skillguides "github.com/tyrantkhan/artifact-helper/skill-guides"
 )
 
 // Skill is one installable skill: the stub a host reads, and the guide the binary serves.

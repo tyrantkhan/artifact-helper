@@ -11,7 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
 )
 
 const (

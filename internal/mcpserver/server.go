@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
 )
 
 // Name is the server's name as MCP clients see it.
