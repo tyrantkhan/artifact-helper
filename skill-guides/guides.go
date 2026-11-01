@@ -5,7 +5,7 @@ package skillguides
 
 import _ "embed"
 
-// ClaudeArtifactHelper is skill-guides/claude-artifact-helper.md.
+// ClaudeArtifactHelper is skill-guides/artifact-helper.md.
 //
-//go:embed claude-artifact-helper.md
+//go:embed artifact-helper.md
 var ClaudeArtifactHelper []byte

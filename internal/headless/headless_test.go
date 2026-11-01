@@ -473,8 +473,8 @@ func fakeBin(t *testing.T, stdout string) string {
 }
 
 func TestOptionsFromEnv(t *testing.T) {
-	env := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": "/x/claude", "CLAUDE_ARTIFACT_HELPER_MODEL": "opus",
-		"CLAUDE_ARTIFACT_HELPER_TIMEOUT": "90s", "CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD": "0", "CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE": "1"}
+	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": "/x/claude", "ARTIFACT_HELPER_MODEL": "opus",
+		"ARTIFACT_HELPER_TIMEOUT": "90s", "ARTIFACT_HELPER_MAX_BUDGET_USD": "0", "ARTIFACT_HELPER_ALLOW_SHARE": "1"}
 	o, err := OptionsFromEnv(func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
@@ -485,7 +485,7 @@ func TestOptionsFromEnv(t *testing.T) {
 	if args := Args(o, "Artifact", "{}", "p", false); contains(args, "--max-budget-usd") {
 		t.Fatalf("a zero budget must pass no cap: %v", args)
 	}
-	for k, v := range map[string]string{"CLAUDE_ARTIFACT_HELPER_TIMEOUT": "soon", "CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD": "-3"} {
+	for k, v := range map[string]string{"ARTIFACT_HELPER_TIMEOUT": "soon", "ARTIFACT_HELPER_MAX_BUDGET_USD": "-3"} {
 		_, err := OptionsFromEnv(func(kk string) string {
 			if kk == k {
 				return v

@@ -1,6 +1,6 @@
 # Privacy
 
-claude-artifact-helper collects no data of its own. It has no telemetry or analytics, and the only network
+artifact-helper collects no data of its own. It has no telemetry or analytics, and the only network
 traffic it causes is Claude Code's: each command runs `claude -p` on this machine, which sends the short prompt,
 the file you publish, and whatever the Artifact tool returns (a page, a comment listing) to Anthropic under
 your own Claude login and Anthropic's terms. The artifacts live on claude.ai in your account, private until

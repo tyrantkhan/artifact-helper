@@ -14,7 +14,7 @@ import (
 )
 
 // Name is the server's name as MCP clients see it.
-const Name = "claude-artifact-helper"
+const Name = "artifact-helper"
 
 const failNote = " A failure comes back as JSON with code, message and fix: follow fix."
 
@@ -223,7 +223,7 @@ func New(opts headless.Options, version string) *mcp.Server {
 		Title: "Share an artifact within the organization",
 		Description: "Give everyone in the account's organization, or named people in it, access to an artifact the account owns. " +
 			"Artifacts cannot be made public this way. The server refuses with code share-disabled unless its operator turned " +
-			"sharing on (CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE=1), because the headless run skips the confirmation Claude Code " +
+			"sharing on (ARTIFACT_HELPER_ALLOW_SHARE=1), because the headless run skips the confirmation Claude Code " +
 			"would ask of the person; then the person can share from the artifact's Share menu on claude.ai instead." + failNote,
 		Annotations: open("Share an artifact within the organization"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareInput) (*mcp.CallToolResult, ShareOutput, error) {

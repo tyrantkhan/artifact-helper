@@ -39,11 +39,11 @@ const (
 	// MaxReplyBytes is the Artifact tool's limit on a comment reply.
 	MaxReplyBytes = 4096
 
-	envClaude  = "CLAUDE_ARTIFACT_HELPER_CLAUDE"
-	envModel   = "CLAUDE_ARTIFACT_HELPER_MODEL"
-	envTimeout = "CLAUDE_ARTIFACT_HELPER_TIMEOUT"
-	envBudget  = "CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD"
-	envShare   = "CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE"
+	envClaude  = "ARTIFACT_HELPER_CLAUDE"
+	envModel   = "ARTIFACT_HELPER_MODEL"
+	envTimeout = "ARTIFACT_HELPER_TIMEOUT"
+	envBudget  = "ARTIFACT_HELPER_MAX_BUDGET_USD"
+	envShare   = "ARTIFACT_HELPER_ALLOW_SHARE"
 )
 
 // Refusal is an error the caller can act on: a stable code, what went wrong, and what to do about it.
@@ -88,7 +88,7 @@ type Options struct {
 	AllowShare bool
 }
 
-// OptionsFromEnv reads the CLAUDE_ARTIFACT_HELPER_* variables through getenv. Variables left unset keep their
+// OptionsFromEnv reads the ARTIFACT_HELPER_* variables through getenv. Variables left unset keep their
 // defaults; a malformed one is a Refusal with code "invalid-env".
 func OptionsFromEnv(getenv func(string) string) (Options, error) {
 	o := Options{Claude: getenv(envClaude), Model: getenv(envModel)}
@@ -419,7 +419,7 @@ func Read(ctx context.Context, opts Options, req ReadRequest) (*ReadResult, erro
 		}
 		if _, err := os.Stat(reported); err != nil {
 			return nil, &Refusal{Code: "read-failed", Message: fmt.Sprintf("the run reported %s but no file is there", reported),
-				Fix: "read again; if it repeats, report it with the output of CLAUDE_ARTIFACT_HELPER_VERBOSE=1"}
+				Fix: "read again; if it repeats, report it with the output of ARTIFACT_HELPER_VERBOSE=1"}
 		}
 		saved = reported
 	}
@@ -937,7 +937,7 @@ func parseOutput(stdout []byte, stderr string, runErr error) (*claudeResult, err
 		}
 		if runErr != nil {
 			return nil, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude failed (%v): %s", runErr, text),
-				Fix: "run `claude-artifact-helper doctor`, then the same command with CLAUDE_ARTIFACT_HELPER_VERBOSE=1 to see the run"}
+				Fix: "run `artifact-helper doctor`, then the same command with ARTIFACT_HELPER_VERBOSE=1 to see the run"}
 		}
 		return nil, &Refusal{Code: "bad-output", Message: "claude printed no result object: " + text,
 			Fix: "update Claude Code (`claude update`); this tool needs `claude -p --output-format json`"}
@@ -960,11 +960,11 @@ func parseOutput(stdout []byte, stderr string, runErr error) (*claudeResult, err
 func decode(cr *claudeResult, v any) error {
 	if len(cr.StructuredOutput) == 0 || string(cr.StructuredOutput) == "null" {
 		return &Refusal{Code: "bad-output", Message: "the run ended without a structured answer: " + tail(strings.TrimSpace(cr.Result), 2000),
-			Fix: "try again; if it repeats, report it with the output of CLAUDE_ARTIFACT_HELPER_VERBOSE=1"}
+			Fix: "try again; if it repeats, report it with the output of ARTIFACT_HELPER_VERBOSE=1"}
 	}
 	if err := json.Unmarshal(cr.StructuredOutput, v); err != nil {
 		return &Refusal{Code: "bad-output", Message: "the run's answer could not be read: " + err.Error(),
-			Fix: "try again; if it repeats, report it with the output of CLAUDE_ARTIFACT_HELPER_VERBOSE=1"}
+			Fix: "try again; if it repeats, report it with the output of ARTIFACT_HELPER_VERBOSE=1"}
 	}
 	return nil
 }
@@ -981,7 +981,7 @@ func refused(what, toolMsg, reply string) error {
 
 func oddAnswer(got string) error {
 	return &Refusal{Code: "bad-output", Message: fmt.Sprintf("the run answered with %q, which is not what was asked for", got),
-		Fix: "try again; if it repeats, report it with the output of CLAUDE_ARTIFACT_HELPER_VERBOSE=1"}
+		Fix: "try again; if it repeats, report it with the output of ARTIFACT_HELPER_VERBOSE=1"}
 }
 
 func tail(s string, n int) string {

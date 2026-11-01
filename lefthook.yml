@@ -53,4 +53,4 @@ pre-push:
     test:
       run: mise exec -- go test ./...
     build:
-      run: mise exec -- go build ./cmd/claude-artifact-helper
+      run: mise exec -- go build ./cmd/artifact-helper

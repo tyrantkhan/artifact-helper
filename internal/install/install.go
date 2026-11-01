@@ -17,7 +17,7 @@ import (
 )
 
 // ServerName is the name the MCP server is registered under.
-const ServerName = "claude-artifact-helper"
+const ServerName = "artifact-helper"
 
 // Env is what the installer reads and runs, injected so tests can drive it.
 type Env struct {

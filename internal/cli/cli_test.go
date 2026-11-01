@@ -65,17 +65,17 @@ func result(t *testing.T, out string) map[string]any {
 
 func TestHelpAndVersion(t *testing.T) {
 	code, out, _ := run(t, nil, "")
-	if code != 0 || !strings.Contains(out, "Usage: claude-artifact-helper <command>") || !strings.Contains(out, "CLAUDE_ARTIFACT_HELPER_MODEL") {
+	if code != 0 || !strings.Contains(out, "Usage: artifact-helper <command>") || !strings.Contains(out, "ARTIFACT_HELPER_MODEL") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	for _, c := range commands() {
 		code, out, _ = run(t, nil, "", "help", c.name)
-		if code != 0 || !strings.HasPrefix(out, "Usage: claude-artifact-helper "+c.name) {
+		if code != 0 || !strings.HasPrefix(out, "Usage: artifact-helper "+c.name) {
 			t.Fatalf("help %s: code=%d out=%q", c.name, code, out)
 		}
 	}
 	code, out, _ = run(t, nil, "", "--version")
-	if code != 0 || out != "claude-artifact-helper "+Version+"\n" {
+	if code != 0 || out != "artifact-helper "+Version+"\n" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	code, _, errs := run(t, nil, "", "bogus")
@@ -90,7 +90,7 @@ func TestPublishPrintsJSON(t *testing.T) {
 	if err := os.WriteFile(p, []byte("<title>x</title>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin, "CLAUDE_ARTIFACT_HELPER_MODEL": "haiku"}
+	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin, "ARTIFACT_HELPER_MODEL": "haiku"}
 	code, out, _ := run(t, env, "", "publish", p, "--title", "x")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out)
@@ -112,7 +112,7 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	threadOK := `{"type":"result","subtype":"success","structured_output":{"replied":true,"resolved":true,"message":"posted","error":""}}`
 	bin := fakeClaude(t, map[string]string{"read": readOK, "publish": linkOK, "comments": listing, "reply": threadOK, "resolve": threadOK},
 		`[ -e "$PWD/index.html" ] || printf '<h1>Hello</h1>' > "$PWD/index.html"`)
-	env := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin}
+	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	out := t.TempDir()
 
 	code, o, _ := run(t, env, "", "read", link, "--out", out)
@@ -162,7 +162,7 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 func TestShare(t *testing.T) {
 	ok := `{"type":"result","subtype":"success","structured_output":{"shared":true,"message":"Shared","error":""}}`
 	bin := fakeClaude(t, map[string]string{"share": ok}, "")
-	env := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin}
+	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	code, o, _ := run(t, env, "", "share", link, "--org")
 	if code != 1 || result(t, o)["error"].(map[string]any)["code"] != "share-disabled" {
 		t.Fatalf("exit %d: %s", code, o)
@@ -172,7 +172,7 @@ func TestShare(t *testing.T) {
 	if code != 0 || res["mode"] != "org" || res["message"] != "Shared" {
 		t.Fatalf("exit %d: %s", code, o)
 	}
-	env["CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE"] = "1"
+	env["ARTIFACT_HELPER_ALLOW_SHARE"] = "1"
 	code, o, _ = run(t, env, "", "share", link, "--people", "sam@example.com, Ada", "--access", "view")
 	res = result(t, o)
 	if code != 0 || res["mode"] != "people" || len(res["people"].([]any)) != 2 || res["access"] != "view" {
@@ -188,7 +188,7 @@ func TestShare(t *testing.T) {
 
 func TestRefusalsAreJSONOnStdout(t *testing.T) {
 	bin := fakeClaude(t, map[string]string{"": ""}, "")
-	withBin := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin}
+	withBin := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	cases := []struct {
 		args []string
 		env  map[string]string
@@ -197,14 +197,14 @@ func TestRefusalsAreJSONOnStdout(t *testing.T) {
 		{[]string{"publish"}, nil, "invalid-args"},
 		{[]string{"publish", "a.html", "b.html"}, nil, "invalid-args"},
 		{[]string{"publish", "/no/such.html"}, withBin, "invalid-file"},
-		{[]string{"publish", "/no/such.html"}, map[string]string{"CLAUDE_ARTIFACT_HELPER_TIMEOUT": "never"}, "invalid-env"},
+		{[]string{"publish", "/no/such.html"}, map[string]string{"ARTIFACT_HELPER_TIMEOUT": "never"}, "invalid-env"},
 		{[]string{"read", "https://example.com/x"}, withBin, "invalid-url"},
 		{[]string{"edit", link, "--from", "/no/such.json"}, withBin, "invalid-input"},
 		{[]string{"comments"}, withBin, "invalid-args"},
 		{[]string{"reply", link}, withBin, "invalid-args"},
 		{[]string{"reply", link, threadUUID}, withBin, "invalid-args"},
 		{[]string{"resolve", link, "nope"}, withBin, "invalid-thread"},
-		{[]string{"doctor"}, map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": "/no/such/claude"}, "no-claude"},
+		{[]string{"doctor"}, map[string]string{"ARTIFACT_HELPER_CLAUDE": "/no/such/claude"}, "no-claude"},
 		{[]string{"doctor", "extra"}, nil, "invalid-args"},
 		{[]string{"serve", "extra"}, nil, "invalid-args"},
 	}
@@ -220,7 +220,7 @@ func TestRefusalsAreJSONOnStdout(t *testing.T) {
 
 func TestDoctorPrintsJSON(t *testing.T) {
 	bin := fakeClaude(t, map[string]string{"": ""}, "")
-	code, out, _ := run(t, map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin}, "", "doctor")
+	code, out, _ := run(t, map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}, "", "doctor")
 	if code != 0 || !strings.Contains(out, `"loggedIn": true`) || !strings.Contains(out, `"version": "9.9.9"`) {
 		t.Fatalf("exit %d: %s", code, out)
 	}
@@ -232,7 +232,7 @@ func TestServeRunsTheMCPServer(t *testing.T) {
 	var errb bytes.Buffer
 	e := &Env{Args: []string{"serve", "--model", "opus"}, Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: &errb,
 		Getenv: func(k string) string {
-			if k == "CLAUDE_ARTIFACT_HELPER_CLAUDE" {
+			if k == "ARTIFACT_HELPER_CLAUDE" {
 				return bin
 			}
 			return ""
@@ -303,10 +303,10 @@ func runMachine(t *testing.T, ienv *install.Env, senv *skillinstall.Env, stdin s
 
 func TestGetSkill(t *testing.T) {
 	code, out, _ := run(t, nil, "", "get-skill")
-	if code != 0 || !strings.HasPrefix(out, "# claude-artifact-helper guide") || !strings.Contains(out, "publish_artifact") {
+	if code != 0 || !strings.HasPrefix(out, "# artifact-helper guide") || !strings.Contains(out, "publish_artifact") {
 		t.Fatalf("exit %d: %.80s", code, out)
 	}
-	code, out, _ = run(t, nil, "", "get-skill", "claude-artifact-helper", "--json")
+	code, out, _ = run(t, nil, "", "get-skill", "artifact-helper", "--json")
 	if code != 0 || result(t, out)["version"] != Version || !strings.Contains(out, `"guide"`) {
 		t.Fatalf("exit %d: %.80s", code, out)
 	}
@@ -323,7 +323,7 @@ func TestInstallAndUninstall(t *testing.T) {
 	if code != 0 || res["dryRun"] != true || res["hosts"] != "skipped: --dry-run" || !strings.Contains(res["summary"].(string), "1 written") {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if _, err := os.Stat(filepath.Join(senv.Home, ".agents", "skills", "claude-artifact-helper")); err == nil || len(*ran) != 0 {
+	if _, err := os.Stat(filepath.Join(senv.Home, ".agents", "skills", "artifact-helper")); err == nil || len(*ran) != 0 {
 		t.Fatal("a dry run wrote or registered")
 	}
 	code, out = runMachine(t, ienv, senv, "", "install")
@@ -335,11 +335,11 @@ func TestInstallAndUninstall(t *testing.T) {
 	if !strings.Contains(res["summary"].(string), "1 written") || len(res["outcomes"].([]any)) != 1 {
 		t.Fatalf("summary = %v", res["summary"])
 	}
-	if !strings.Contains(strings.Join(*ran, "\n"), "claude mcp add --scope user claude-artifact-helper -- /opt/bin/cah serve") {
+	if !strings.Contains(strings.Join(*ran, "\n"), "claude mcp add --scope user artifact-helper -- /opt/bin/cah serve") {
 		t.Fatalf("ran = %v", *ran)
 	}
 	for _, p := range []string{".agents/skills", ".claude/skills", ".cursor/skills"} {
-		if _, err := os.Stat(filepath.Join(senv.Home, p, "claude-artifact-helper", "SKILL.md")); err != nil {
+		if _, err := os.Stat(filepath.Join(senv.Home, p, "artifact-helper", "SKILL.md")); err != nil {
 			t.Errorf("%s: %v", p, err)
 		}
 	}
@@ -365,7 +365,7 @@ func TestInstallAndUninstall(t *testing.T) {
 	if code != 0 || res["hosts"].([]any)[0].(map[string]any)["server"] != "removed" || len(res["skills"].([]any)) != 3 || res["skills"].([]any)[0].(map[string]any)["state"] != "removed" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
-	if _, err := os.Lstat(filepath.Join(senv.Home, ".claude", "skills", "claude-artifact-helper")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Lstat(filepath.Join(senv.Home, ".claude", "skills", "artifact-helper")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the skill link is still there")
 	}
 }

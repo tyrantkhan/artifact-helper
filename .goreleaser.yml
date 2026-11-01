@@ -1,10 +1,10 @@
 version: 2
 
-project_name: claude-artifact-helper
+project_name: artifact-helper
 
 builds:
-  - main: ./cmd/claude-artifact-helper
-    binary: claude-artifact-helper
+  - main: ./cmd/artifact-helper
+    binary: artifact-helper
     ldflags:
       - -s -w
       - -X github.com/tyrantkhan/claude-artifact-helper/internal/cli.Version={{.Version}}
@@ -36,7 +36,7 @@ changelog:
 release:
   github:
     owner: tyrantkhan
-    name: claude-artifact-helper
+    name: artifact-helper
 
 notarize:
   macos:
@@ -52,9 +52,9 @@ notarize:
         timeout: 20m
 
 homebrew_casks:
-  - name: claude-artifact-helper
+  - name: artifact-helper
     binaries:
-      - claude-artifact-helper
+      - artifact-helper
     directory: Casks
     repository:
       owner: tyrantkhan

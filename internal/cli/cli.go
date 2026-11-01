@@ -1,4 +1,4 @@
-// Package cli is the claude-artifact-helper command line: the MCP server, and each of its tools as a one-shot
+// Package cli is the artifact-helper command line: the MCP server, and each of its tools as a one-shot
 // command that prints one JSON object.
 package cli
 
@@ -85,7 +85,7 @@ func Main(env *Env) int {
 	}
 	name := env.Args[0]
 	if name == "version" || name == "--version" || name == "-v" {
-		fmt.Fprintln(env.Stdout, "claude-artifact-helper "+Version)
+		fmt.Fprintln(env.Stdout, "artifact-helper "+Version)
 		return 0
 	}
 	for _, c := range commands() {
@@ -103,17 +103,17 @@ func Main(env *Env) int {
 		writeError(env, name, err)
 		return 1
 	}
-	fmt.Fprintf(env.Stderr, "claude-artifact-helper: unknown command %q\n\n", name)
+	fmt.Fprintf(env.Stderr, "artifact-helper: unknown command %q\n\n", name)
 	usage(env.Stderr)
 	return 2
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `claude-artifact-helper: publish, read, edit and answer comments on claude.ai artifacts through your Claude
+	fmt.Fprint(w, `artifact-helper: publish, read, edit and answer comments on claude.ai artifacts through your Claude
 subscription, from any MCP client or shell. Under the cover each command runs Claude Code headlessly (claude -p)
 and lets its Artifact tool do the work.
 
-Usage: claude-artifact-helper <command> [flags]
+Usage: artifact-helper <command> [flags]
 
 `)
 	for _, c := range commands() {
@@ -121,16 +121,16 @@ Usage: claude-artifact-helper <command> [flags]
 	}
 	fmt.Fprint(w, `
 Every command but get-skill prints one JSON object. A refusal has "ok": false and an "error" with "code",
-"message" and "fix". Run claude-artifact-helper help <command> for its flags and result, and --version for
+"message" and "fix". Run artifact-helper help <command> for its flags and result, and --version for
 this build's version.
 
 Environment:
-  CLAUDE_ARTIFACT_HELPER_CLAUDE          path of the claude binary (default: claude on PATH)
-  CLAUDE_ARTIFACT_HELPER_MODEL           model for the headless runs (default `+headless.DefaultModel+`)
-  CLAUDE_ARTIFACT_HELPER_TIMEOUT         how long one run may take (default `+headless.DefaultTimeout.String()+`)
-  CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD  cap passed to claude --max-budget-usd (default `+fmt.Sprint(headless.DefaultMaxBudgetUSD)+`; 0 for none)
-  CLAUDE_ARTIFACT_HELPER_VERBOSE         set to 1 to log each step on stderr
-  CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE     set to 1 to let share run; see claude-artifact-helper help share
+  ARTIFACT_HELPER_CLAUDE          path of the claude binary (default: claude on PATH)
+  ARTIFACT_HELPER_MODEL           model for the headless runs (default `+headless.DefaultModel+`)
+  ARTIFACT_HELPER_TIMEOUT         how long one run may take (default `+headless.DefaultTimeout.String()+`)
+  ARTIFACT_HELPER_MAX_BUDGET_USD  cap passed to claude --max-budget-usd (default `+fmt.Sprint(headless.DefaultMaxBudgetUSD)+`; 0 for none)
+  ARTIFACT_HELPER_VERBOSE         set to 1 to log each step on stderr
+  ARTIFACT_HELPER_ALLOW_SHARE     set to 1 to let share run; see artifact-helper help share
   CLAUDE_CODE_OAUTH_TOKEN                a token from claude setup-token, for a machine without a claude login
 `)
 }
@@ -144,7 +144,7 @@ func writeError(env *Env, name string, err error) {
 	b, _ := json.Marshal(map[string]any{"ok": false, "command": name, "error": rf})
 	fmt.Fprintln(env.Stdout, string(b))
 	if rf.Code == "error" || name == "serve" {
-		fmt.Fprintln(env.Stderr, "claude-artifact-helper "+name+": "+err.Error())
+		fmt.Fprintln(env.Stderr, "artifact-helper "+name+": "+err.Error())
 	}
 }
 
@@ -194,7 +194,7 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func badArgs(name, format string, args ...any) error {
-	return &headless.Refusal{Code: "invalid-args", Message: fmt.Sprintf(format, args...), Fix: "run claude-artifact-helper help " + name}
+	return &headless.Refusal{Code: "invalid-args", Message: fmt.Sprintf(format, args...), Fix: "run artifact-helper help " + name}
 }
 
 // options reads the environment into headless options, with the flags a command may add on top.
@@ -204,7 +204,7 @@ func options(env *Env) (headless.Options, error) {
 		return opts, err
 	}
 	opts.Environ = env.Environ()
-	if v := env.Getenv("CLAUDE_ARTIFACT_HELPER_VERBOSE"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+	if v := env.Getenv("ARTIFACT_HELPER_VERBOSE"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
 		opts.Log = env.Stderr
 	}
 	return opts, nil
@@ -216,7 +216,7 @@ func addOptionFlags(fs *flag.FlagSet, env *Env, opts *headless.Options) {
 	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "how long one run may take")
 	fs.Float64Var(&opts.MaxBudgetUSD, "max-budget-usd", opts.MaxBudgetUSD, "cap passed to claude --max-budget-usd; 0 for the default, negative for none")
 	fs.BoolFunc("verbose", "log each step on stderr", func(string) error { opts.Log = env.Stderr; return nil })
-	fs.BoolVar(&opts.AllowShare, "allow-share", opts.AllowShare, "let share run (see claude-artifact-helper help share)")
+	fs.BoolVar(&opts.AllowShare, "allow-share", opts.AllowShare, "let share run (see artifact-helper help share)")
 }
 
 // setup parses args for a command: the shared option flags plus the command's own, and exactly want
@@ -254,10 +254,10 @@ func signalContext() (context.Context, context.CancelFunc) {
 
 const optionFlags = `[--claude <path>] [--model <name>] [--timeout <duration>] [--max-budget-usd <n>] [--verbose] [--allow-share]`
 
-const serveHelp = `Usage: claude-artifact-helper serve ` + optionFlags + `
+const serveHelp = `Usage: artifact-helper serve ` + optionFlags + `
 
 Run the MCP server over stdio. An MCP client launches this command and talks JSON-RPC on its stdin and stdout;
-logs go to stderr. The flags override the CLAUDE_ARTIFACT_HELPER_* environment variables.
+logs go to stderr. The flags override the ARTIFACT_HELPER_* environment variables.
 
 Tools (each takes the artifact's claude.ai link as "url" where one is needed):
   publish_artifact  {"file_path", "title"?, "description"?, "icon"?, "url"?} -> {"url", "updated", "turns", "cost_usd"}
@@ -280,7 +280,7 @@ func cmdServe(env *Env, args []string) error {
 	ctx, stop := signalContext()
 	defer stop()
 	s := mcpserver.New(opts, Version)
-	fmt.Fprintf(env.Stderr, "claude-artifact-helper %s: MCP server on stdio (model %s)\n", Version, orDefault(opts.Model, headless.DefaultModel))
+	fmt.Fprintf(env.Stderr, "artifact-helper %s: MCP server on stdio (model %s)\n", Version, orDefault(opts.Model, headless.DefaultModel))
 	serve := env.Serve
 	if serve == nil {
 		serve = func(ctx context.Context, s *mcp.Server) error { return s.Run(ctx, &mcp.StdioTransport{}) }
@@ -298,7 +298,7 @@ func orDefault(v, d string) string {
 	return v
 }
 
-const publishHelp = `Usage: claude-artifact-helper publish <file> [--title <text>] [--description <text>] [--icon <word>] [--url <link>]
+const publishHelp = `Usage: artifact-helper publish <file> [--title <text>] [--description <text>] [--icon <word>] [--url <link>]
                                       ` + optionFlags + `
 
 Publish one .html (or .md) file as a claude.ai artifact and print its link. The same publish the MCP tool does,
@@ -334,7 +334,7 @@ func cmdPublish(env *Env, args []string) error {
 	return writeJSON(env, "publish", res)
 }
 
-const readHelp = `Usage: claude-artifact-helper read <link> [--path <published path>] [--out <dir>] ` + optionFlags + `
+const readHelp = `Usage: artifact-helper read <link> [--path <published path>] [--out <dir>] ` + optionFlags + `
 
 Save an artifact's page to a local file, so you can read it, edit it and republish it. --path names another of
 the artifact's published files (default index.html, the page itself). --out is the directory the file lands in,
@@ -364,7 +364,7 @@ func cmdRead(env *Env, args []string) error {
 	return writeJSON(env, "read", res)
 }
 
-const editHelp = `Usage: claude-artifact-helper edit <link> [--file <path>] [--from <edits.json>] ` + optionFlags + `
+const editHelp = `Usage: artifact-helper edit <link> [--file <path>] [--from <edits.json>] ` + optionFlags + `
 
 Apply old-string to new-string replacements to an artifact's page and republish it at the same link. The edits
 are a JSON array on stdin, or in the file --from names:
@@ -397,7 +397,7 @@ func cmdEdit(env *Env, args []string) error {
 	}
 	if err := json.Unmarshal(input, &req.Edits); err != nil {
 		return &headless.Refusal{Code: "invalid-input", Message: "the edits are not a JSON array of {old_str, new_str}: " + err.Error(),
-			Fix: "run claude-artifact-helper help edit"}
+			Fix: "run artifact-helper help edit"}
 	}
 	ctx, stop := signalContext()
 	defer stop()
@@ -420,7 +420,7 @@ func readInput(env *Env, from string) ([]byte, error) {
 	return b, nil
 }
 
-const commentsHelp = `Usage: claude-artifact-helper comments <link> [--thread <id>] [--cursor <cursor>] ` + optionFlags + `
+const commentsHelp = `Usage: artifact-helper comments <link> [--thread <id>] [--cursor <cursor>] ` + optionFlags + `
 
 List the comment threads viewers left on an artifact: each thread's id, first comment, replies, whether it is
 resolved, and whether a writer has sent it to Claude, which reply and resolve need. --thread reads one thread.
@@ -452,7 +452,7 @@ func cmdComments(env *Env, args []string) error {
 	return writeJSON(env, "comments", res)
 }
 
-const replyHelp = `Usage: claude-artifact-helper reply <link> <thread id> --text <reply> [--resolve] ` + optionFlags + `
+const replyHelp = `Usage: artifact-helper reply <link> <thread id> --text <reply> [--resolve] ` + optionFlags + `
 
 Post a reply into one comment thread, shown as Claude's reply via you. Only a thread a writer has sent to Claude
 (replying on it with Send to Claude, or mentioning @claude) accepts it; otherwise the refusal's code is
@@ -482,7 +482,7 @@ func cmdReply(env *Env, args []string) error {
 	return writeJSON(env, "reply", res)
 }
 
-const resolveHelp = `Usage: claude-artifact-helper resolve <link> <thread id> ` + optionFlags + `
+const resolveHelp = `Usage: artifact-helper resolve <link> <thread id> ` + optionFlags + `
 
 Mark one comment thread resolved, after acting on it. Only a thread a writer has sent to Claude accepts it.
 
@@ -505,14 +505,14 @@ func cmdResolve(env *Env, args []string) error {
 	return writeJSON(env, "resolve", res)
 }
 
-const shareHelp = `Usage: claude-artifact-helper share <link> --org ` + optionFlags + `
-       claude-artifact-helper share <link> --people <name or email>[,...] [--access view|comment] ` + optionFlags + `
+const shareHelp = `Usage: artifact-helper share <link> --org ` + optionFlags + `
+       artifact-helper share <link> --people <name or email>[,...] [--access view|comment] ` + optionFlags + `
 
 Give everyone in your organization (--org, always with comment access), or the people named (--people, view or
 comment access, default comment), access to an artifact you own. Artifacts cannot be made public this way;
 nobody outside the organization can be added.
 
-Sharing is off until you turn it on with --allow-share or CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE=1: a share changes
+Sharing is off until you turn it on with --allow-share or ARTIFACT_HELPER_ALLOW_SHARE=1: a share changes
 who can open the artifact, and Claude Code normally has you confirm it on a card, which the headless run skips
 instead. Without the switch the refusal's code is share-disabled, and you can share from the artifact's Share
 menu on claude.ai.
@@ -558,7 +558,7 @@ func cmdShare(env *Env, args []string) error {
 	return writeJSON(env, "share", res)
 }
 
-const doctorHelp = `Usage: claude-artifact-helper doctor [--claude <path>] [--model <name>]
+const doctorHelp = `Usage: artifact-helper doctor [--claude <path>] [--model <name>]
 
 Check that the claude binary is found and signed in, and show the settings a run would use.
 
@@ -583,9 +583,9 @@ func cmdDoctor(env *Env, args []string) error {
 	return writeJSON(env, "doctor", h)
 }
 
-const getSkillHelp = `Usage: claude-artifact-helper get-skill [--json]
+const getSkillHelp = `Usage: artifact-helper get-skill [--json]
 
-Print the version-matched guide as Markdown. The skill stub a host installs (skills/claude-artifact-helper/SKILL.md)
+Print the version-matched guide as Markdown. The skill stub a host installs (skills/artifact-helper/SKILL.md)
 says when to engage and tells the agent to run this command, so the tool and command details it reads always
 match the binary it runs. With --json, print {"name", "version", "guide"} instead.
 `
@@ -605,7 +605,7 @@ func cmdGetSkill(env *Env, args []string) error {
 		found, ok := skills.Find(pos[0])
 		if !ok {
 			return &headless.Refusal{Code: "invalid-args", Message: fmt.Sprintf("%q is not a skill this build ships", pos[0]),
-				Fix: "run claude-artifact-helper get-skill with no name"}
+				Fix: "run artifact-helper get-skill with no name"}
 		}
 		s = found
 	}
@@ -713,45 +713,45 @@ func installEnv(env *Env) (install.Env, error) {
 		}}, nil
 }
 
-const installHelp = `Usage: claude-artifact-helper install [--mcp-only | --skill-only] [--force] [--dry-run]
+const installHelp = `Usage: artifact-helper install [--mcp-only | --skill-only] [--force] [--dry-run]
 
-Set this machine up: register this binary as the "claude-artifact-helper" MCP server with every agent host
+Set this machine up: register this binary as the "artifact-helper" MCP server with every agent host
 found here, and install the skill for every agent found here. Run it again after moving or updating the binary.
 
 The server is registered through each host's own command, or its config file:
-  claude   claude mcp add --scope user claude-artifact-helper -- <this binary> serve
-  codex    codex mcp add claude-artifact-helper -- <this binary> serve
+  claude   claude mcp add --scope user artifact-helper -- <this binary> serve
+  codex    codex mcp add artifact-helper -- <this binary> serve
   cursor   an entry in ~/.cursor/mcp.json
-  gemini   gemini mcp add --scope user claude-artifact-helper <this binary> serve
+  gemini   gemini mcp add --scope user artifact-helper <this binary> serve
 
 The skill is installed the way Orca's installer does it: the stub goes to the shared ~/.agents/skills folder
 (which Codex reads), and each other agent's skills folder gets a link to it (Claude Code ~/.claude/skills,
 Cursor ~/.cursor/skills, Gemini CLI ~/.gemini/skills). Only copies this tool wrote and nobody changed are
 rewritten; a copy you changed, or a different skill with the same name, is left alone and reported. --force
-replaces it after moving it to a backup under ~/.agents/.claude-artifact-helper-skill-backups. --dry-run
+replaces it after moving it to a backup under ~/.agents/.artifact-helper-skill-backups. --dry-run
 prints the skill plan without writing or registering anything.
 
 Result:
-  {"ok": true, "command": "install", "self": "/usr/local/bin/claude-artifact-helper",
+  {"ok": true, "command": "install", "self": "/usr/local/bin/artifact-helper",
    "hosts": [{"host": "claude", "server": "added"}, {"host": "codex", "server": "skipped: not found on this machine"}],
-   "plan": {"scope": "global", "skills": [{"name": "claude-artifact-helper", "ops": [
-      {"kind": "write", "path": "/home/me/.agents/skills/claude-artifact-helper", "role": "shared"},
-      {"kind": "link", "path": "/home/me/.claude/skills/claude-artifact-helper", "role": "agent", "agents": ["claude"]}]}]},
-   "outcomes": [{"name": "claude-artifact-helper", "status": "ran", "ops": [{"path": "...", "kind": "write", "status": "done"}]}],
-   "summary": "claude-artifact-helper: 1 written · 1 linked"}
+   "plan": {"scope": "global", "skills": [{"name": "artifact-helper", "ops": [
+      {"kind": "write", "path": "/home/me/.agents/skills/artifact-helper", "role": "shared"},
+      {"kind": "link", "path": "/home/me/.claude/skills/artifact-helper", "role": "agent", "agents": ["claude"]}]}]},
+   "outcomes": [{"name": "artifact-helper", "status": "ran", "ops": [{"path": "...", "kind": "write", "status": "done"}]}],
+   "summary": "artifact-helper: 1 written · 1 linked"}
 
 The exit code is 1 when a skill operation failed or its path changed while the run was planned; copies left
 alone are only reported.
 `
 
-const uninstallHelp = `Usage: claude-artifact-helper uninstall [--mcp-only | --skill-only]
+const uninstallHelp = `Usage: artifact-helper uninstall [--mcp-only | --skill-only]
 
 Undo install: unregister the server from every host found here, and remove the skill copies install wrote
 (links to the shared copy, and untouched copies of ours). A copy you changed is left and reported.
 
 Result:
   {"ok": true, "command": "uninstall", "self": "...", "hosts": [{"host": "claude", "server": "removed"}],
-   "skills": [{"name": "claude-artifact-helper", "path": "/home/me/.claude/skills/claude-artifact-helper", "state": "removed"}]}
+   "skills": [{"name": "artifact-helper", "path": "/home/me/.claude/skills/artifact-helper", "state": "removed"}]}
 `
 
 func cmdInstall(env *Env, args []string) error {

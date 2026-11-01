@@ -1,5 +1,5 @@
 {
-  "name": "claude-artifact-helper",
+  "name": "artifact-helper",
   "version": "0.1.0",
   "private": true,
   "description": "Publish, edit, share and answer comments on claude.ai artifacts from any agent, through the Claude subscription already signed in on the machine.",

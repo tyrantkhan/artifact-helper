@@ -24,7 +24,7 @@ type Skill struct {
 	Released []string
 }
 
-//go:embed claude-artifact-helper/SKILL.md
+//go:embed artifact-helper/SKILL.md
 var claudeArtifactHelperStub []byte
 
 //go:embed released-digests.txt
@@ -33,11 +33,11 @@ var releasedDigests []byte
 // All lists the skills this build ships, by name.
 func All() []Skill {
 	return []Skill{{
-		Name:        "claude-artifact-helper",
+		Name:        "artifact-helper",
 		Description: "Publish, edit, share and answer comments on claude.ai artifacts through the human's Claude subscription.",
 		Stub:        claudeArtifactHelperStub,
 		Guide:       skillguides.ClaudeArtifactHelper,
-		Released:    released("claude-artifact-helper"),
+		Released:    released("artifact-helper"),
 	}}
 }
 

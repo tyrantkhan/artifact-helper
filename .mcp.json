@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "claude-artifact-helper": {
-      "command": "claude-artifact-helper",
+    "artifact-helper": {
+      "command": "artifact-helper",
       "args": ["serve"]
     }
   }

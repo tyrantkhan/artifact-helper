@@ -1,5 +1,5 @@
 ---
-name: claude-artifact-helper
+name: artifact-helper
 description: >-
   Use when the human wants a web page, report, dashboard, diagram, prototype or other visual
   they can open in a browser or share as a link, or asks to publish, update, share or "put up"
@@ -9,23 +9,23 @@ description: >-
   page design of its own.
 ---
 
-# claude-artifact-helper
+# artifact-helper
 
-This discovery stub loads the version-matched guide from the `claude-artifact-helper` binary
+This discovery stub loads the version-matched guide from the `artifact-helper` binary
 installed on this machine, so the tool and command details never drift from the version you run.
 
 ## Load the version-matched guide before publishing or touching an artifact
 
 ```text
-claude-artifact-helper get-skill
+artifact-helper get-skill
 ```
 
 The same operations exist as MCP tools (`publish_artifact`, `read_artifact`, `edit_artifact`,
 `read_comments`, `reply_to_comment`, `resolve_comment`, `share_artifact`, `check_setup`) when the
-`claude-artifact-helper` MCP server is configured, and as commands of the CLI. The guide pairs
+`artifact-helper` MCP server is configured, and as commands of the CLI. The guide pairs
 them. Use the CLI's `help <command>` for anything the guide does not cover; do not guess flags.
 
-If `claude-artifact-helper` cannot run, say so, and do not invent another way to publish. If
+If `artifact-helper` cannot run, say so, and do not invent another way to publish. If
 `get-skill` is unknown, the installed binary is older than this stub: updating it restores the
 guide.
 

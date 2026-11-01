@@ -20,7 +20,7 @@ func fakeEnv(t *testing.T, missing ...string) (Env, *[]string) {
 		t.Fatal(err)
 	}
 	var ran []string
-	env := Env{Home: home, Self: "/opt/bin/claude-artifact-helper",
+	env := Env{Home: home, Self: "/opt/bin/artifact-helper",
 		LookPath: func(name string) (string, error) {
 			for _, m := range missing {
 				if m == name {
@@ -60,12 +60,12 @@ func TestAddServerOnEveryHost(t *testing.T) {
 		}
 	}
 	want := []string{
-		"claude mcp remove --scope user claude-artifact-helper",
-		"claude mcp add --scope user claude-artifact-helper -- /opt/bin/claude-artifact-helper serve",
-		"codex mcp remove claude-artifact-helper",
-		"codex mcp add claude-artifact-helper -- /opt/bin/claude-artifact-helper serve",
-		"gemini mcp remove --scope user claude-artifact-helper",
-		"gemini mcp add --scope user claude-artifact-helper /opt/bin/claude-artifact-helper serve",
+		"claude mcp remove --scope user artifact-helper",
+		"claude mcp add --scope user artifact-helper -- /opt/bin/artifact-helper serve",
+		"codex mcp remove artifact-helper",
+		"codex mcp add artifact-helper -- /opt/bin/artifact-helper serve",
+		"gemini mcp remove --scope user artifact-helper",
+		"gemini mcp add --scope user artifact-helper /opt/bin/artifact-helper serve",
 	}
 	if strings.Join(*ran, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("ran:\n%s\nwant:\n%s", strings.Join(*ran, "\n"), strings.Join(want, "\n"))
@@ -120,14 +120,14 @@ func TestCursorConfigKeepsOtherServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(f)
-	if !strings.Contains(string(b), `"other"`) || !strings.Contains(string(b), `"theme": "dark"`) || !strings.Contains(string(b), `"claude-artifact-helper"`) {
+	if !strings.Contains(string(b), `"other"`) || !strings.Contains(string(b), `"theme": "dark"`) || !strings.Contains(string(b), `"artifact-helper"`) {
 		t.Fatalf("mcp.json = %s", b)
 	}
 	if _, err := RemoveServer(context.Background(), env, []string{"cursor"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(f)
-	if !strings.Contains(string(b), `"other"`) || strings.Contains(string(b), `"claude-artifact-helper"`) {
+	if !strings.Contains(string(b), `"other"`) || strings.Contains(string(b), `"artifact-helper"`) {
 		t.Fatalf("mcp.json after uninstall = %s", b)
 	}
 	// A broken file is refused, not overwritten.
@@ -159,9 +159,9 @@ func TestRemoveServer(t *testing.T) {
 		}
 	}
 	want := []string{
-		"claude mcp remove --scope user claude-artifact-helper",
-		"codex mcp remove claude-artifact-helper",
-		"gemini mcp remove --scope user claude-artifact-helper",
+		"claude mcp remove --scope user artifact-helper",
+		"codex mcp remove artifact-helper",
+		"gemini mcp remove --scope user artifact-helper",
 	}
 	if strings.Join(*ran, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("ran:\n%s", strings.Join(*ran, "\n"))

@@ -541,7 +541,7 @@ func equalObserved(a, b Observed) bool {
 
 // backupPathFor is deterministic for one run, so Execute can report where a replaced copy went.
 func backupPathFor(env Env, path string) string {
-	return filepath.Join(env.Home, ".agents", ".claude-artifact-helper-skill-backups",
+	return filepath.Join(env.Home, ".agents", ".artifact-helper-skill-backups",
 		filepath.Base(path)+"-"+env.Now().UTC().Format("20060102T150405Z")+"-"+shortHash(path))
 }
 

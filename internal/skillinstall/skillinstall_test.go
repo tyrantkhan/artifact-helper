@@ -13,7 +13,7 @@ import (
 	"github.com/tyrantkhan/claude-artifact-helper/skills"
 )
 
-const name = "claude-artifact-helper"
+const name = "artifact-helper"
 
 func env(t *testing.T, present ...string) Env {
 	t.Helper()
@@ -99,7 +99,7 @@ func TestUpdateOnlyTouchesExistingCopies(t *testing.T) {
 	if err := os.MkdirAll(old, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	older := []byte(strings.Replace(string(stub()), "# claude-artifact-helper", "# claude-artifact-helper (old)", 1))
+	older := []byte(strings.Replace(string(stub()), "# artifact-helper", "# artifact-helper (old)", 1))
 	s, _ := skills.Find(name)
 	s.Released = append(s.Released, skills.Digest(older))
 	withOld := func(fn func()) {
@@ -172,7 +172,7 @@ func TestEditedAndForeignCopiesAreLeftAloneUnlessForced(t *testing.T) {
 	if Failed(outs) {
 		t.Fatalf("outs = %+v", outs)
 	}
-	backups := filepath.Join(e.Home, ".agents", ".claude-artifact-helper-skill-backups")
+	backups := filepath.Join(e.Home, ".agents", ".artifact-helper-skill-backups")
 	entries, _ := os.ReadDir(backups)
 	if len(entries) != 2 {
 		t.Fatalf("backups = %v", entries)

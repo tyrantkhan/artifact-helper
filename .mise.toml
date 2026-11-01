@@ -11,12 +11,12 @@ description = "Install the tools above and the git hooks"
 run = ["mise install", "lefthook install"]
 
 [tasks.build]
-description = "Build bin/claude-artifact-helper, versioned from git"
-run = 'go build -ldflags "{{vars.ldflags}}" -o bin/claude-artifact-helper ./cmd/claude-artifact-helper'
+description = "Build bin/artifact-helper, versioned from git"
+run = 'go build -ldflags "{{vars.ldflags}}" -o bin/artifact-helper ./cmd/artifact-helper'
 
 [tasks.install]
-description = "Install claude-artifact-helper into GOPATH/bin, versioned from git"
-run = 'go install -ldflags "{{vars.ldflags}}" ./cmd/claude-artifact-helper'
+description = "Install artifact-helper into GOPATH/bin, versioned from git"
+run = 'go install -ldflags "{{vars.ldflags}}" ./cmd/artifact-helper'
 
 [tasks.test]
 description = "Run the tests"

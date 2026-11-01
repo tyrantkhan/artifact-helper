@@ -1,11 +1,11 @@
 {
-  "name": "claude-artifact-helper",
+  "name": "artifact-helper",
   "interface": {
     "displayName": "Claude artifact helper"
   },
   "plugins": [
     {
-      "name": "claude-artifact-helper",
+      "name": "artifact-helper",
       "source": {
         "source": "url",
         "url": "https://github.com/tyrantkhan/claude-artifact-helper.git"
