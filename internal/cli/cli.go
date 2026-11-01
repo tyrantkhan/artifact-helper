@@ -560,11 +560,13 @@ func cmdShare(env *Env, args []string) error {
 
 const doctorHelp = `Usage: artifact-helper doctor [--claude <path>] [--model <name>]
 
-Check that the claude binary is found and signed in, and show the settings a run would use.
+Check that the claude binary is found and signed in, and show the settings a run would use. "email" and
+"organization" name the signed-in account when claude reports them (a claude.ai login does; a bare token may not).
 
 Result:
   {"ok": true, "command": "doctor", "claude": "/usr/local/bin/claude", "version": "2.1.0 (Claude Code)",
-   "loggedIn": true, "authMethod": "claude.ai", "model": "sonnet", "timeout": "5m0s"}
+   "loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "organization": "Example Inc",
+   "model": "sonnet", "timeout": "5m0s"}
 
 A refusal's code is no-claude, not-logged-in or claude-failed.
 `

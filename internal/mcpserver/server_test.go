@@ -29,7 +29,7 @@ func fakeClaude(t *testing.T, outputs map[string]string, pre string) string {
 	}
 	bin := filepath.Join(t.TempDir(), "claude")
 	var b strings.Builder
-	b.WriteString("#!/bin/sh\ncase \"$1\" in --version) echo '9.9.9'; exit 0;; auth) echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'; exit 0;; esac\n")
+	b.WriteString("#!/bin/sh\ncase \"$1\" in --version) echo '9.9.9'; exit 0;; auth) echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"email\":\"me@example.com\"}'; exit 0;; esac\n")
 	b.WriteString("for a; do prompt=$a; done\n" + pre + "\ncase \"$prompt\" in\n")
 	for op, out := range outputs {
 		if op != "" {
@@ -211,7 +211,7 @@ func TestCheckSetup(t *testing.T) {
 	bin := fakeClaude(t, map[string]string{"": ""}, "")
 	sess := connect(t, headless.Options{Claude: bin, Model: "opus"})
 	res, text, sc := call(t, sess, "check_setup", map[string]any{})
-	if res.IsError || !strings.Contains(sc, `"loggedIn":true`) || !strings.Contains(sc, `"model":"opus"`) || !strings.Contains(text, "signed in (claude.ai)") {
+	if res.IsError || !strings.Contains(sc, `"loggedIn":true`) || !strings.Contains(sc, `"model":"opus"`) || !strings.Contains(text, "signed in as me@example.com (claude.ai)") || !strings.Contains(sc, `"email":"me@example.com"`) {
 		t.Fatalf("structured = %s, text = %q", sc, text)
 	}
 	sess = connect(t, headless.Options{Claude: "/no/such/claude"})

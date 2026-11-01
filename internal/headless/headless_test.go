@@ -44,7 +44,7 @@ func fakeClaude(t *testing.T, outputs map[string]string, code int, pre string) (
 	return bin, record
 }
 
-var authStatus = `{"loggedIn": true, "authMethod": "claude.ai"}`
+var authStatus = `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc"}`
 
 const (
 	link       = "https://claude.ai/artifact/Abc123"
@@ -508,11 +508,13 @@ func TestDoctor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !h.LoggedIn || h.AuthMethod != "claude.ai" || h.Version != "9.9.9 (Claude Code)" || h.Claude != bin {
+	if !h.LoggedIn || h.AuthMethod != "claude.ai" || h.Version != "9.9.9 (Claude Code)" || h.Claude != bin || h.Email != "me@example.com" || h.Organization != "Example Inc" || h.Account() != "me@example.com in Example Inc" {
 		t.Fatalf("health = %+v", h)
 	}
 	authStatus = `{"loggedIn": false}`
-	t.Cleanup(func() { authStatus = `{"loggedIn": true, "authMethod": "claude.ai"}` })
+	t.Cleanup(func() {
+		authStatus = `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc"}`
+	})
 	bin, _ = fakeClaude(t, map[string]string{"": ""}, 0, "")
 	h, err = Doctor(context.Background(), Options{Claude: bin})
 	if r, ok := IsRefusal(err); !ok || r.Code != "not-logged-in" || h == nil || h.LoggedIn {

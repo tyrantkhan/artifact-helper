@@ -249,7 +249,11 @@ func New(opts headless.Options, version string) *mcp.Server {
 		if err != nil {
 			return nil, nil, asToolError(err)
 		}
-		return text(fmt.Sprintf("claude %s at %s, signed in (%s); runs use %s with a %s timeout", h.Version, h.Claude, h.AuthMethod, h.Model, h.Timeout)), h, nil
+		who := "signed in (" + h.AuthMethod + ")"
+		if a := h.Account(); a != "" {
+			who = "signed in as " + a + " (" + h.AuthMethod + ")"
+		}
+		return text(fmt.Sprintf("claude %s at %s, %s; runs use %s with a %s timeout", h.Version, h.Claude, who, h.Model, h.Timeout)), h, nil
 	})
 	return s
 }

@@ -999,8 +999,25 @@ type Health struct {
 	Version    string `json:"version"`
 	LoggedIn   bool   `json:"loggedIn"`
 	AuthMethod string `json:"authMethod,omitempty"`
-	Model      string `json:"model"`
-	Timeout    string `json:"timeout"`
+	// Email and Organization name the signed-in account, when claude reports them (a claude.ai login does;
+	// a bare token may not).
+	Email        string `json:"email,omitempty"`
+	Organization string `json:"organization,omitempty"`
+	Model        string `json:"model"`
+	Timeout      string `json:"timeout"`
+}
+
+// Account says who is signed in, in a few words, or "" when claude did not say.
+func (h *Health) Account() string {
+	switch {
+	case h.Email != "" && h.Organization != "":
+		return h.Email + " in " + h.Organization
+	case h.Email != "":
+		return h.Email
+	case h.Organization != "":
+		return h.Organization
+	}
+	return ""
 }
 
 // Doctor checks that the claude binary is present and signed in. A failed check is a Refusal.
@@ -1027,8 +1044,11 @@ func Doctor(ctx context.Context, opts Options) (*Health, error) {
 	h.Version = v
 	out, err := exec1("auth", "status")
 	var status struct {
-		LoggedIn   bool   `json:"loggedIn"`
-		AuthMethod string `json:"authMethod"`
+		LoggedIn         bool   `json:"loggedIn"`
+		AuthMethod       string `json:"authMethod"`
+		Email            string `json:"email"`
+		OrgName          string `json:"orgName"`
+		OrganizationName string `json:"organizationName"`
 	}
 	if jerr := json.Unmarshal([]byte(out), &status); jerr != nil {
 		if err != nil {
@@ -1038,7 +1058,11 @@ func Doctor(ctx context.Context, opts Options) (*Health, error) {
 		return nil, &Refusal{Code: "bad-output", Message: "claude auth status printed no JSON: " + tail(out, 500),
 			Fix: "update Claude Code (`claude update`)"}
 	}
-	h.LoggedIn, h.AuthMethod = status.LoggedIn, status.AuthMethod
+	h.LoggedIn, h.AuthMethod, h.Email = status.LoggedIn, status.AuthMethod, status.Email
+	h.Organization = status.OrgName
+	if h.Organization == "" {
+		h.Organization = status.OrganizationName
+	}
 	if !h.LoggedIn {
 		return h, &Refusal{Code: "not-logged-in", Message: "claude is not signed in", Fix: loginFix}
 	}
