@@ -12,6 +12,8 @@
   "supportUrl": "https://github.com/tyrantkhan/claude-artifact-helper/issues",
   "privacyPolicyUrl": "https://github.com/tyrantkhan/claude-artifact-helper/blob/main/PRIVACY.md",
   "termsOfServiceUrl": "https://github.com/tyrantkhan/claude-artifact-helper/blob/main/LICENSE",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
   "keywords": [
     "artifacts",
