@@ -1,6 +1,6 @@
-// Package install puts the MCP server and the skill where each agent host finds them, and takes them out
-// again. Hosts with a command line that manages MCP servers (Claude Code, Codex, Gemini CLI) are driven through
-// it, so their configuration formats stay theirs; Cursor's mcp.json is edited directly.
+// Package install registers the MCP server with each agent host, and unregisters it. Hosts with a command
+// line that manages MCP servers (Claude Code, Codex, Gemini CLI) are driven through it, so their configuration
+// formats stay theirs; Cursor's mcp.json is edited directly. Skills are the skillinstall package's job.
 package install
 
 import (
@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
-	"github.com/tyrantkhan/claude-artifact-helper/skills"
 )
 
 // ServerName is the name the MCP server is registered under.
@@ -38,18 +37,14 @@ var Hosts = []string{"claude", "codex", "cursor", "gemini"}
 // HostResult reports what happened on one host.
 type HostResult struct {
 	Host string `json:"host"`
-	// MCP says what happened to the server registration: added, removed, or skipped with a reason.
-	MCP string `json:"mcp"`
-	// Skill is the path the skill was written to or removed from, or skipped with a reason.
-	Skill string `json:"skill"`
+	// Server says what happened to the registration: added, removed, or skipped with a reason.
+	Server string `json:"server"`
 }
 
 type host struct {
 	name string
 	// present reports whether the host is on this machine; a host named explicitly is installed anyway.
 	present func(env Env) bool
-	// skillDir is where the host reads skills from.
-	skillDir func(home string) string
 	// add registers the MCP server; remove unregisters it.
 	add    func(ctx context.Context, env Env) error
 	remove func(ctx context.Context, env Env) error
@@ -94,82 +89,42 @@ func hosts() map[string]host {
 		},
 		func(string) []string { return []string{"mcp", "remove", "--scope", "user", ServerName} })
 	return map[string]host{
-		"claude": {name: "claude", present: onPath("claude"), skillDir: func(h string) string { return filepath.Join(h, ".claude", "skills") }, add: claudeAdd, remove: claudeRemove},
-		"codex":  {name: "codex", present: onPath("codex"), skillDir: func(h string) string { return filepath.Join(h, ".agents", "skills") }, add: codexAdd, remove: codexRemove},
+		"claude": {name: "claude", present: onPath("claude"), add: claudeAdd, remove: claudeRemove},
+		"codex":  {name: "codex", present: onPath("codex"), add: codexAdd, remove: codexRemove},
 		"cursor": {name: "cursor", present: func(env Env) bool { _, err := os.Stat(filepath.Join(env.Home, ".cursor")); return err == nil },
-			skillDir: func(h string) string { return filepath.Join(h, ".cursor", "skills") }, add: cursorAdd, remove: cursorRemove},
-		"gemini": {name: "gemini", present: onPath("gemini"), skillDir: func(h string) string { return filepath.Join(h, ".gemini", "skills") }, add: geminiAdd, remove: geminiRemove},
+			add: cursorAdd, remove: cursorRemove},
+		"gemini": {name: "gemini", present: onPath("gemini"), add: geminiAdd, remove: geminiRemove},
 	}
 }
 
-// Options choose what Install and Uninstall touch.
-type Options struct {
-	// Hosts names the hosts to act on. Empty means every host present on this machine.
-	Hosts []string
-	// MCP and Skill choose the parts; both false means both.
-	MCP, Skill bool
-}
-
-// Install registers the MCP server with each host and writes the skill where the host reads skills. A host
-// named in opts.Hosts is installed even when its command line is not found; with no hosts named, hosts that
-// are not present are skipped and say so.
-func Install(ctx context.Context, env Env, opts Options) ([]HostResult, error) {
-	return each(ctx, env, opts, func(ctx context.Context, h host, res *HostResult) error {
-		if opts.MCP || !opts.Skill {
-			if err := h.add(ctx, env); err != nil {
-				return err
-			}
-			res.MCP = "added"
-		} else {
-			res.MCP = "skipped: --skill-only"
+// AddServer registers the MCP server with each host. A host named explicitly is set up even when its command
+// line is not found; with no hosts named, hosts that are not present are skipped and say so.
+func AddServer(ctx context.Context, env Env, names []string) ([]HostResult, error) {
+	return each(ctx, env, names, func(ctx context.Context, h host, res *HostResult) error {
+		if err := h.add(ctx, env); err != nil {
+			return err
 		}
-		if opts.Skill || !opts.MCP {
-			dir := filepath.Join(h.skillDir(env.Home), skills.Name)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return fmt.Errorf("creating %s: %w", dir, err)
-			}
-			p := filepath.Join(dir, "SKILL.md")
-			if err := os.WriteFile(p, skills.ClaudeArtifactHelper, 0o644); err != nil {
-				return fmt.Errorf("writing %s: %w", p, err)
-			}
-			res.Skill = p
-		} else {
-			res.Skill = "skipped: --mcp-only"
-		}
+		res.Server = "added"
 		return nil
 	})
 }
 
-// Uninstall unregisters the MCP server and removes the skill.
-func Uninstall(ctx context.Context, env Env, opts Options) ([]HostResult, error) {
-	return each(ctx, env, opts, func(ctx context.Context, h host, res *HostResult) error {
-		if opts.MCP || !opts.Skill {
-			if err := h.remove(ctx, env); err != nil {
-				return err
-			}
-			res.MCP = "removed"
-		} else {
-			res.MCP = "skipped: --skill-only"
+// RemoveServer unregisters the MCP server from each host.
+func RemoveServer(ctx context.Context, env Env, names []string) ([]HostResult, error) {
+	return each(ctx, env, names, func(ctx context.Context, h host, res *HostResult) error {
+		if err := h.remove(ctx, env); err != nil {
+			return err
 		}
-		if opts.Skill || !opts.MCP {
-			dir := filepath.Join(h.skillDir(env.Home), skills.Name)
-			if err := os.RemoveAll(dir); err != nil {
-				return fmt.Errorf("removing %s: %w", dir, err)
-			}
-			res.Skill = dir
-		} else {
-			res.Skill = "skipped: --mcp-only"
-		}
+		res.Server = "removed"
 		return nil
 	})
 }
 
-func each(ctx context.Context, env Env, opts Options, do func(context.Context, host, *HostResult) error) ([]HostResult, error) {
+func each(ctx context.Context, env Env, names []string, do func(context.Context, host, *HostResult) error) ([]HostResult, error) {
 	if env.Home == "" || env.Self == "" || env.LookPath == nil || env.Run == nil {
 		return nil, errors.New("install: incomplete environment")
 	}
 	all := hosts()
-	names := opts.Hosts
 	explicit := len(names) > 0
 	if !explicit {
 		names = Hosts
@@ -183,7 +138,7 @@ func each(ctx context.Context, env Env, opts Options, do func(context.Context, h
 		}
 		res := HostResult{Host: n}
 		if !explicit && !h.present(env) {
-			res.MCP, res.Skill = "skipped: not found on this machine", "skipped: not found on this machine"
+			res.Server = "skipped: not found on this machine"
 			results = append(results, res)
 			continue
 		}

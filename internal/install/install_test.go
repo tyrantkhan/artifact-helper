@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
-	"github.com/tyrantkhan/claude-artifact-helper/skills"
 )
 
 // fakeEnv has every host present and records the host command lines it runs.
@@ -46,9 +45,9 @@ func fakeEnv(t *testing.T, missing ...string) (Env, *[]string) {
 	return env, &ran
 }
 
-func TestInstallEveryHost(t *testing.T) {
+func TestAddServerOnEveryHost(t *testing.T) {
 	env, ran := fakeEnv(t)
-	res, err := Install(context.Background(), env, Options{})
+	res, err := AddServer(context.Background(), env, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +55,8 @@ func TestInstallEveryHost(t *testing.T) {
 		t.Fatalf("results = %+v", res)
 	}
 	for _, r := range res {
-		if r.MCP != "added" {
-			t.Errorf("%s: mcp = %s", r.Host, r.MCP)
-		}
-		b, err := os.ReadFile(r.Skill)
-		if err != nil || string(b) != string(skills.ClaudeArtifactHelper) {
-			t.Errorf("%s: skill at %s: %v", r.Host, r.Skill, err)
+		if r.Server != "added" {
+			t.Errorf("%s: server = %s", r.Host, r.Server)
 		}
 	}
 	want := []string{
@@ -75,11 +70,6 @@ func TestInstallEveryHost(t *testing.T) {
 	if strings.Join(*ran, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("ran:\n%s\nwant:\n%s", strings.Join(*ran, "\n"), strings.Join(want, "\n"))
 	}
-	for _, p := range []string{".claude/skills", ".agents/skills", ".cursor/skills", ".gemini/skills"} {
-		if _, err := os.Stat(filepath.Join(env.Home, p, skills.Name, "SKILL.md")); err != nil {
-			t.Errorf("%s: %v", p, err)
-		}
-	}
 	b, _ := os.ReadFile(filepath.Join(env.Home, ".cursor", "mcp.json"))
 	var cfg struct {
 		MCPServers map[string]struct {
@@ -92,15 +82,15 @@ func TestInstallEveryHost(t *testing.T) {
 	}
 }
 
-func TestInstallSkipsHostsNotPresent(t *testing.T) {
+func TestAddServerSkipsHostsNotPresent(t *testing.T) {
 	env, ran := fakeEnv(t, "codex", "cursor")
-	res, err := Install(context.Background(), env, Options{})
+	res, err := AddServer(context.Background(), env, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range res {
 		skipped := r.Host == "codex" || r.Host == "cursor"
-		if skipped != strings.HasPrefix(r.MCP, "skipped: not found") || skipped != strings.HasPrefix(r.Skill, "skipped: not found") {
+		if skipped != strings.HasPrefix(r.Server, "skipped: not found") {
 			t.Errorf("%s: %+v", r.Host, r)
 		}
 	}
@@ -109,27 +99,12 @@ func TestInstallSkipsHostsNotPresent(t *testing.T) {
 			t.Errorf("ran %q for a host that is not present", line)
 		}
 	}
-	// Named explicitly, a host is installed anyway.
-	res, err = Install(context.Background(), env, Options{Hosts: []string{"codex"}})
-	if err != nil || len(res) != 1 || res[0].MCP != "added" {
+	// Named explicitly, a host is set up anyway.
+	res, err = AddServer(context.Background(), env, []string{"codex"})
+	if err != nil || len(res) != 1 || res[0].Server != "added" {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-}
-
-func TestInstallParts(t *testing.T) {
-	env, ran := fakeEnv(t)
-	res, err := Install(context.Background(), env, Options{Hosts: []string{"claude"}, Skill: true})
-	if err != nil || res[0].MCP != "skipped: --skill-only" || !strings.HasSuffix(res[0].Skill, "SKILL.md") || len(*ran) != 0 {
-		t.Fatalf("res=%+v err=%v ran=%v", res, err, *ran)
-	}
-	res, err = Install(context.Background(), env, Options{Hosts: []string{"cursor"}, MCP: true})
-	if err != nil || res[0].MCP != "added" || res[0].Skill != "skipped: --mcp-only" {
-		t.Fatalf("res=%+v err=%v", res, err)
-	}
-	if _, err := os.Stat(filepath.Join(env.Home, ".cursor", "skills")); err == nil {
-		t.Fatal("--mcp-only wrote the skill")
-	}
-	_, err = Install(context.Background(), env, Options{Hosts: []string{"vim"}})
+	_, err = AddServer(context.Background(), env, []string{"vim"})
 	if r, ok := headless.IsRefusal(err); !ok || r.Code != "invalid-args" {
 		t.Fatalf("err = %v", err)
 	}
@@ -141,14 +116,14 @@ func TestCursorConfigKeepsOtherServers(t *testing.T) {
 	if err := os.WriteFile(f, []byte(`{"mcpServers":{"other":{"command":"x"}},"theme":"dark"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Install(context.Background(), env, Options{Hosts: []string{"cursor"}, MCP: true}); err != nil {
+	if _, err := AddServer(context.Background(), env, []string{"cursor"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(f)
 	if !strings.Contains(string(b), `"other"`) || !strings.Contains(string(b), `"theme": "dark"`) || !strings.Contains(string(b), `"claude-artifact-helper"`) {
 		t.Fatalf("mcp.json = %s", b)
 	}
-	if _, err := Uninstall(context.Background(), env, Options{Hosts: []string{"cursor"}, MCP: true}); err != nil {
+	if _, err := RemoveServer(context.Background(), env, []string{"cursor"}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(f)
@@ -159,7 +134,7 @@ func TestCursorConfigKeepsOtherServers(t *testing.T) {
 	if err := os.WriteFile(f, []byte(`not json`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Install(context.Background(), env, Options{Hosts: []string{"cursor"}, MCP: true})
+	_, err := AddServer(context.Background(), env, []string{"cursor"})
 	if r, ok := headless.IsRefusal(err); !ok || r.Code != "host-failed" {
 		t.Fatalf("err = %v", err)
 	}
@@ -168,22 +143,19 @@ func TestCursorConfigKeepsOtherServers(t *testing.T) {
 	}
 }
 
-func TestUninstall(t *testing.T) {
+func TestRemoveServer(t *testing.T) {
 	env, ran := fakeEnv(t)
-	if _, err := Install(context.Background(), env, Options{}); err != nil {
+	if _, err := AddServer(context.Background(), env, nil); err != nil {
 		t.Fatal(err)
 	}
 	*ran = nil
-	res, err := Uninstall(context.Background(), env, Options{})
+	res, err := RemoveServer(context.Background(), env, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range res {
-		if r.MCP != "removed" {
-			t.Errorf("%s: mcp = %s", r.Host, r.MCP)
-		}
-		if _, err := os.Stat(r.Skill); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s: skill still at %s", r.Host, r.Skill)
+		if r.Server != "removed" {
+			t.Errorf("%s: server = %s", r.Host, r.Server)
 		}
 	}
 	want := []string{
@@ -204,7 +176,7 @@ func TestHostCommandFailureIsARefusal(t *testing.T) {
 		}
 		return "", nil
 	}
-	_, err := Install(context.Background(), env, Options{Hosts: []string{"codex"}})
+	_, err := AddServer(context.Background(), env, []string{"codex"})
 	r, ok := headless.IsRefusal(err)
 	if !ok || r.Code != "host-failed" || !strings.Contains(r.Message, "boom") || !strings.Contains(r.Fix, "codex mcp add") {
 		t.Fatalf("err = %v", err)

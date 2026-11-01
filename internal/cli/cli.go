@@ -22,6 +22,8 @@ import (
 	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
 	"github.com/tyrantkhan/claude-artifact-helper/internal/install"
 	"github.com/tyrantkhan/claude-artifact-helper/internal/mcpserver"
+	"github.com/tyrantkhan/claude-artifact-helper/internal/skillinstall"
+	"github.com/tyrantkhan/claude-artifact-helper/skills"
 )
 
 // Version is this build's version. release-please bumps it; release builds also set it with -ldflags.
@@ -37,8 +39,10 @@ type Env struct {
 	Environ func() []string
 	// Serve runs the MCP server on stdin and stdout. Nil uses the real stdio transport.
 	Serve func(ctx context.Context, s *mcp.Server) error
-	// Install is how install and uninstall reach the hosts. Nil uses the real home directory, binary and PATH.
+	// Install is how mcp add and remove reach the hosts. Nil uses the real home directory, binary and PATH.
 	Install *install.Env
+	// Skills is how the skills commands see the machine. Nil uses the real home directory, cwd and PATH.
+	Skills *skillinstall.Env
 }
 
 type command struct {
@@ -59,8 +63,10 @@ func commands() []command {
 		{"resolve", "Mark a comment thread resolved", resolveHelp, cmdResolve},
 		{"share", "Share an artifact with the organization or named people in it", shareHelp, cmdShare},
 		{"doctor", "Check that Claude Code is installed and signed in", doctorHelp, cmdDoctor},
-		{"install", "Register the MCP server and the skill with Claude Code, Codex, Cursor and Gemini CLI", installHelp, cmdInstall},
-		{"uninstall", "Remove what install registered", uninstallHelp, cmdUninstall},
+		{"skills", "List, print, install and update the agent skills this build ships", skillsHelp, cmdSkills},
+		{"mcp", "Register the MCP server with Claude Code, Codex, Cursor and Gemini CLI, or unregister it", mcpHelp, cmdMCP},
+		{"install", "mcp add and skills install for every host on this machine, in one go", installHelp, cmdInstall},
+		{"uninstall", "Undo install: unregister the server and remove the skill copies it wrote", uninstallHelp, cmdUninstall},
 	}
 }
 
@@ -68,6 +74,10 @@ func commands() []command {
 func Main(env *Env) int {
 	if len(env.Args) == 0 || env.Args[0] == "help" || env.Args[0] == "-h" || env.Args[0] == "--help" {
 		if len(env.Args) > 1 {
+			if h, ok := nestedHelp[strings.Join(env.Args[1:], " ")]; ok {
+				fmt.Fprint(env.Stdout, h)
+				return 0
+			}
 			for _, c := range commands() {
 				if c.name == env.Args[1] {
 					fmt.Fprint(env.Stdout, c.help)
@@ -90,6 +100,10 @@ func Main(env *Env) int {
 		err := c.run(env, env.Args[1:])
 		if err == nil || errors.Is(err, flag.ErrHelp) {
 			return 0
+		}
+		var ee *exitError
+		if errors.As(err, &ee) {
+			return ee.code
 		}
 		writeError(env, name, err)
 		return 1
@@ -573,65 +587,361 @@ func cmdDoctor(env *Env, args []string) error {
 	return writeJSON(env, "doctor", h)
 }
 
-const installHelp = `Usage: claude-artifact-helper install [claude|codex|cursor|gemini ...] [--mcp-only | --skill-only]
+const skillsHelp = `Usage: claude-artifact-helper skills <list|get|install|update|installed>
 
-Register this binary as the "claude-artifact-helper" MCP server with each agent host, and write the
-claude-artifact-helper skill where the host reads skills, so the agent knows when and how to use the tools.
-Without host names, every host found on this machine is set up and the others are skipped; a host named
-explicitly is set up even when its command is not found.
+The skills this build ships are hybrid discovery stubs, as Orca's are: the short SKILL.md a host installs says
+when to engage and loads the version-matched guide from this binary with "skills get", so the tool details
+never drift from the version you run.
 
-  claude   claude mcp add --scope user  and  ~/.claude/skills/claude-artifact-helper/SKILL.md
-  codex    codex mcp add                and  ~/.agents/skills/claude-artifact-helper/SKILL.md
-  cursor   ~/.cursor/mcp.json           and  ~/.cursor/skills/claude-artifact-helper/SKILL.md
-  gemini   gemini mcp add --scope user  and  ~/.gemini/skills/claude-artifact-helper/SKILL.md
+  list       List the skills this build ships
+  get        Print a skill's version-matched guide as Markdown (--json for an object)
+  install    Install the skills on this machine: a shared copy under .agents/skills, linked from each agent
+  update     Update the copies install wrote, where they already are
+  installed  List the copies found on this machine and their state
 
-Run it again after moving the binary or updating it, so the registered path and the skill stay current.
-Claude Code users can install the plugin instead (see the README), which brings the same server and skill
-plus a SessionStart hook.
-
-Result:
-  {"ok": true, "command": "install", "self": "/usr/local/bin/claude-artifact-helper",
-   "hosts": [{"host": "claude", "mcp": "added", "skill": "/home/me/.claude/skills/claude-artifact-helper/SKILL.md"},
-             {"host": "codex", "mcp": "skipped: not found on this machine", "skill": "skipped: not found on this machine"}]}
+Run claude-artifact-helper help skills <command> for each one's flags.
 `
 
-const uninstallHelp = `Usage: claude-artifact-helper uninstall [claude|codex|cursor|gemini ...] [--mcp-only | --skill-only]
+const skillsListHelp = `Usage: claude-artifact-helper skills list
 
-Unregister the MCP server from each host and remove the skill that install wrote. Without host names, every
-host found on this machine is cleaned up.
-
-Result:
-  {"ok": true, "command": "uninstall",
-   "hosts": [{"host": "claude", "mcp": "removed", "skill": "/home/me/.claude/skills/claude-artifact-helper"}]}
+List the skills this build ships, with one-line descriptions, as {"skills": [{"name", "description"}]}.
 `
 
-func cmdInstall(env *Env, args []string) error {
-	return hostsCmd(env, "install", installHelp, args, install.Install)
-}
-func cmdUninstall(env *Env, args []string) error {
-	return hostsCmd(env, "uninstall", uninstallHelp, args, install.Uninstall)
+const skillsGetHelp = `Usage: claude-artifact-helper skills get <name> [--full] [--json]
+
+Print the skill's version-matched guide as Markdown, for the agent to read. --full is accepted for Orca-style
+callers; the guide has no separate references. With --json, print {"name", "version", "guide"} instead.
+"show" is an alias.
+`
+
+const skillsInstallHelp = `Usage: claude-artifact-helper skills install [--skill <name>]... [--all] [--agent <name>[,<name>]] [--local]
+                                              [--force] [--dry-run] [--json]
+
+Install the skills this build ships on this machine, the way Orca's skill installer does: the stub is written
+to the shared .agents/skills/<name> folder, and each detected agent's own skills folder gets a link to it
+(Claude Code ~/.claude/skills, Cursor ~/.cursor/skills, Gemini CLI ~/.gemini/skills; Codex reads the shared
+folder). On Windows, where links are not made, each agent gets its own copy.
+
+Only copies this tool wrote and nobody changed are updated. A copy you changed, or a different skill with the
+same name, is left alone and reported; --force replaces it after moving it to a backup under
+~/.agents/.claude-artifact-helper-skill-backups.
+
+--skill picks skills (default: every skill; --all says so explicitly). --agent picks agents instead of
+detecting them, or "universal" for the shared folder alone. --local installs into the current project instead
+of the home directory, linking only into agent folders the project already has. --dry-run prints the plan and
+its digest without writing; a real run plans again and writes only where the disk still matches. --json is
+accepted; the output is JSON either way.
+
+Result:
+  {"ok": true, "command": "skills install", "plan": {"scope": "global", "root": "/home/me", "planDigest": "...",
+     "skills": [{"name": "claude-artifact-helper", "digest": "...", "ops": [
+        {"kind": "write", "path": "/home/me/.agents/skills/claude-artifact-helper", "role": "shared", "agents": ["codex"]},
+        {"kind": "link", "path": "/home/me/.claude/skills/claude-artifact-helper", "role": "agent", "agents": ["claude"]},
+        {"kind": "leave", "path": "/home/me/.cursor/skills/claude-artifact-helper", "reason": "edited", "replaceable": true}]}]},
+   "outcomes": [{"name": "claude-artifact-helper", "status": "ran", "ops": [{"path": "...", "kind": "write", "status": "done"}]}],
+   "summary": "claude-artifact-helper: 2 written · 1 left alone: You've changed this copy"}
+
+The exit code is 1 when an operation failed or its path changed while the run was planned; copies left alone
+are only reported.
+`
+
+const skillsUpdateHelp = `Usage: claude-artifact-helper skills update [--skill <name>]... [--all] [--agent <name>[,<name>]] [--local]
+                                             [--force] [--dry-run] [--json]
+
+Run the same planner as skills install, but only where a copy already is: it never adds a copy, or one for a
+newly detected agent. Untouched copies are rewritten in place; others are left alone unless --force.
+
+Result: as skills install.
+`
+
+const skillsInstalledHelp = `Usage: claude-artifact-helper skills installed [--local] [--json]
+
+List every copy of the skills this build ships found at the global roots (or the project's, with --local),
+with its state: current (ours, this build's stub), outdated (ours, older), edited (you changed it), other (a
+different skill with the same name), link (to the shared copy) or foreign-link.
+
+Result:
+  {"ok": true, "command": "skills installed", "installed": [{"name": "claude-artifact-helper",
+     "path": "/home/me/.agents/skills/claude-artifact-helper", "agents": ["codex"], "state": "current"}]}
+`
+
+var nestedHelp = map[string]string{
+	"skills list": skillsListHelp, "skills get": skillsGetHelp, "skills show": skillsGetHelp, "skills install": skillsInstallHelp,
+	"skills update": skillsUpdateHelp, "skills installed": skillsInstalledHelp,
+	"mcp add": mcpAddHelp, "mcp remove": mcpRemoveHelp,
 }
 
-func hostsCmd(env *Env, name, help string, args []string, do func(context.Context, install.Env, install.Options) ([]install.HostResult, error)) error {
+func cmdSkills(env *Env, args []string) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprint(env.Stdout, skillsHelp)
+		return nil
+	}
+	rest := args[1:]
+	switch args[0] {
+	case "list":
+		fs := newFlags(env, "skills list", skillsListHelp)
+		fs.Bool("json", false, "accepted; the output is JSON either way")
+		if _, err := parse(fs, rest); err != nil {
+			return err
+		}
+		var out []map[string]string
+		for _, s := range skills.All() {
+			out = append(out, map[string]string{"name": s.Name, "description": s.Description})
+		}
+		return writeJSON(env, "skills list", map[string]any{"skills": out})
+	case "get", "show":
+		fs := newFlags(env, "skills get", skillsGetHelp)
+		asJSON := fs.Bool("json", false, "print an object instead of the Markdown")
+		fs.Bool("full", false, "accepted; the guide has no separate references")
+		pos, err := parse(fs, rest)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 1 {
+			return badArgs("skills get", "pass the skill's name")
+		}
+		s, ok := skills.Find(pos[0])
+		if !ok {
+			return &headless.Refusal{Code: "invalid-args", Message: fmt.Sprintf("%q is not a skill this build ships", pos[0]),
+				Fix: "run claude-artifact-helper skills list"}
+		}
+		if *asJSON {
+			return writeJSON(env, "skills get", map[string]any{"name": s.Name, "version": Version, "description": s.Description, "guide": string(s.Guide)})
+		}
+		_, err = env.Stdout.Write(s.Guide)
+		return err
+	case "install", "update":
+		return skillsPlanCmd(env, args[0], rest)
+	case "installed":
+		fs := newFlags(env, "skills installed", skillsInstalledHelp)
+		local := fs.Bool("local", false, "the current project instead of the home directory")
+		fs.Bool("json", false, "accepted; the output is JSON either way")
+		if pos, err := parse(fs, rest); err != nil {
+			return err
+		} else if len(pos) > 0 {
+			return badArgs("skills installed", "skills installed takes no arguments")
+		}
+		senv, err := skillsEnv(env)
+		if err != nil {
+			return err
+		}
+		found, err := skillinstall.Scan(senv, *local)
+		if err != nil {
+			return err
+		}
+		if found == nil {
+			found = []skillinstall.Installed{}
+		}
+		return writeJSON(env, "skills installed", map[string]any{"installed": found})
+	}
+	return badArgs("skills", "unknown skills command %q", args[0])
+}
+
+func skillsPlanCmd(env *Env, verb string, args []string) error {
+	name := "skills " + verb
+	help := skillsInstallHelp
+	if verb == "update" {
+		help = skillsUpdateHelp
+	}
 	fs := newFlags(env, name, help)
-	var opts install.Options
-	fs.BoolVar(&opts.MCP, "mcp-only", false, "only the MCP server registration")
-	fs.BoolVar(&opts.Skill, "skill-only", false, "only the skill")
+	var skillNames repeated
+	fs.Var(&skillNames, "skill", "a skill to act on; repeatable")
+	all := fs.Bool("all", false, "every skill this build ships")
+	agents := fs.String("agent", "", "comma-separated agents to target, or universal for the shared folder alone")
+	opts := skillinstall.Options{Update: verb == "update"}
+	fs.BoolVar(&opts.Local, "local", false, "the current project instead of the home directory")
+	fs.BoolVar(&opts.Force, "force", false, "replace copies that would be left alone, after a backup")
+	dry := fs.Bool("dry-run", false, "print the plan without writing")
+	fs.Bool("json", false, "accepted; the output is JSON either way")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
-	if opts.MCP && opts.Skill {
-		return badArgs(name, "pass --mcp-only or --skill-only, not both")
+	if len(pos) > 0 {
+		return badArgs(name, "%s takes flags only", name)
 	}
-	opts.Hosts = pos
+	if *all && len(skillNames) > 0 {
+		return badArgs(name, "pass --all or --skill, not both")
+	}
+	opts.Skills = skillNames
+	if fs.Lookup("agent").Value.String() != "" || flagSet(fs, "agent") {
+		opts.Agents = []string{}
+		for _, a := range strings.Split(*agents, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				opts.Agents = append(opts.Agents, a)
+			}
+		}
+		if len(opts.Agents) == 0 {
+			return badArgs(name, "pass --agent one or more of claude, codex, cursor, gemini, or universal")
+		}
+	}
+	senv, err := skillsEnv(env)
+	if err != nil {
+		return err
+	}
+	plan, err := skillinstall.Make(senv, opts)
+	if err != nil {
+		return err
+	}
+	if *dry {
+		return writeJSON(env, name, map[string]any{"dryRun": true, "plan": plan, "summary": summarize(plan, nil)})
+	}
+	outs := skillinstall.Execute(senv, plan)
+	if err := writeJSON(env, name, map[string]any{"plan": plan, "outcomes": outs, "summary": summarize(plan, outs)}); err != nil {
+		return err
+	}
+	if skillinstall.Failed(outs) {
+		return &exitError{code: 1}
+	}
+	return nil
+}
+
+// summarize says in one line per skill what the plan does, or did.
+func summarize(plan *skillinstall.Plan, outs []skillinstall.Outcome) string {
+	var lines []string
+	for i, e := range plan.Skills {
+		counts := map[string]int{}
+		var left []string
+		for j, op := range e.Ops {
+			status := "planned"
+			if outs != nil && j < len(outs[i].Ops) {
+				status = outs[i].Ops[j].Status
+			}
+			switch {
+			case status == "failed":
+				counts["failed"]++
+			case status == "changed":
+				counts["changed meanwhile"]++
+			case status == "skipped":
+				counts["skipped"]++
+			case op.Kind == skillinstall.Leave:
+				counts["left alone"]++
+				if t := skillinstall.ReasonText[op.Reason]; t != "" && !strings.Contains(strings.Join(left, ","), t) {
+					left = append(left, t)
+				}
+			case op.Kind == skillinstall.Keep:
+				counts["unchanged"]++
+			case op.Kind == skillinstall.Write:
+				counts["written"]++
+			case op.Kind == skillinstall.Update:
+				counts["updated"]++
+			case op.Kind == skillinstall.Link:
+				counts["linked"]++
+			case op.Kind == skillinstall.Replace:
+				counts["replaced"]++
+			}
+		}
+		var parts []string
+		for _, k := range []string{"written", "updated", "linked", "replaced", "unchanged", "left alone", "skipped", "changed meanwhile", "failed"} {
+			if n := counts[k]; n > 0 {
+				p := fmt.Sprintf("%d %s", n, k)
+				if k == "left alone" && len(left) > 0 {
+					p += ": " + strings.Join(left, "; ")
+				}
+				parts = append(parts, p)
+			}
+		}
+		if len(parts) == 0 {
+			parts = []string{"nothing to do"}
+		}
+		lines = append(lines, e.Name+": "+strings.Join(parts, " · "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// repeated collects a repeatable string flag.
+type repeated []string
+
+func (r *repeated) String() string     { return strings.Join(*r, ",") }
+func (r *repeated) Set(v string) error { *r = append(*r, v); return nil }
+
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
+}
+
+// exitError carries an exit code for a command whose result was printed but that did not fully succeed.
+type exitError struct{ code int }
+
+func (e *exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
+
+func skillsEnv(env *Env) (skillinstall.Env, error) {
+	if env.Skills != nil {
+		return *env.Skills, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return skillinstall.Env{}, fmt.Errorf("finding the home directory: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return skillinstall.Env{}, fmt.Errorf("finding the current directory: %w", err)
+	}
+	return skillinstall.Env{Home: home, Cwd: cwd, Getenv: env.Getenv, LookPath: exec.LookPath, Now: time.Now}, nil
+}
+
+const mcpHelp = `Usage: claude-artifact-helper mcp <add|remove> [claude|codex|cursor|gemini ...]
+
+Register this binary as the "claude-artifact-helper" MCP server with each agent host, or unregister it.
+
+  claude   claude mcp add --scope user claude-artifact-helper -- <this binary> serve
+  codex    codex mcp add claude-artifact-helper -- <this binary> serve
+  cursor   an entry in ~/.cursor/mcp.json
+  gemini   gemini mcp add --scope user claude-artifact-helper <this binary> serve
+
+Without host names, every host found on this machine is set up and the others are skipped; a host named
+explicitly is set up even when its command is not found. Run add again after moving or updating the binary.
+`
+
+const mcpAddHelp = `Usage: claude-artifact-helper mcp add [claude|codex|cursor|gemini ...]
+
+Register this binary as the MCP server with each host (see claude-artifact-helper help mcp).
+
+Result:
+  {"ok": true, "command": "mcp add", "self": "/usr/local/bin/claude-artifact-helper",
+   "hosts": [{"host": "claude", "server": "added"}, {"host": "codex", "server": "skipped: not found on this machine"}]}
+`
+
+const mcpRemoveHelp = `Usage: claude-artifact-helper mcp remove [claude|codex|cursor|gemini ...]
+
+Unregister the MCP server from each host.
+
+Result:
+  {"ok": true, "command": "mcp remove", "self": "...", "hosts": [{"host": "claude", "server": "removed"}]}
+`
+
+func cmdMCP(env *Env, args []string) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprint(env.Stdout, mcpHelp)
+		return nil
+	}
+	switch args[0] {
+	case "add":
+		return hostsCmd(env, "mcp add", mcpAddHelp, args[1:], install.AddServer)
+	case "remove":
+		return hostsCmd(env, "mcp remove", mcpRemoveHelp, args[1:], install.RemoveServer)
+	}
+	return badArgs("mcp", "unknown mcp command %q", args[0])
+}
+
+func hostsCmd(env *Env, name, help string, args []string, do func(context.Context, install.Env, []string) ([]install.HostResult, error)) error {
+	fs := newFlags(env, name, help)
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
 	ienv, err := installEnv(env)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signalContext()
 	defer stop()
-	results, err := do(ctx, ienv, opts)
+	results, err := do(ctx, ienv, pos)
 	if err != nil {
 		return err
 	}
@@ -660,4 +970,90 @@ func installEnv(env *Env) (install.Env, error) {
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}}, nil
+}
+
+const installHelp = `Usage: claude-artifact-helper install [--force]
+
+Set this machine up in one go: "mcp add" for every host found here, then "skills install" for every agent
+found here. Run it again after moving or updating the binary. See help mcp and help skills install for what
+each part does; --force is passed to skills install.
+
+Result:
+  {"ok": true, "command": "install", "self": "...", "hosts": [...], "plan": {...}, "outcomes": [...], "summary": "..."}
+`
+
+const uninstallHelp = `Usage: claude-artifact-helper uninstall
+
+Undo install: "mcp remove" for every host found here, then remove the skill copies install wrote (links to
+the shared copy, and untouched copies of ours). A copy you changed is left and reported.
+
+Result:
+  {"ok": true, "command": "uninstall", "self": "...", "hosts": [...], "skills": [{"name", "path", "state"}]}
+`
+
+func cmdInstall(env *Env, args []string) error {
+	fs := newFlags(env, "install", installHelp)
+	force := fs.Bool("force", false, "replace skill copies that would be left alone, after a backup")
+	if pos, err := parse(fs, args); err != nil {
+		return err
+	} else if len(pos) > 0 {
+		return badArgs("install", "install takes no arguments")
+	}
+	ienv, err := installEnv(env)
+	if err != nil {
+		return err
+	}
+	senv, err := skillsEnv(env)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signalContext()
+	defer stop()
+	hosts, err := install.AddServer(ctx, ienv, nil)
+	if err != nil {
+		return err
+	}
+	plan, err := skillinstall.Make(senv, skillinstall.Options{Force: *force})
+	if err != nil {
+		return err
+	}
+	outs := skillinstall.Execute(senv, plan)
+	if err := writeJSON(env, "install", map[string]any{"self": ienv.Self, "hosts": hosts, "plan": plan, "outcomes": outs, "summary": summarize(plan, outs)}); err != nil {
+		return err
+	}
+	if skillinstall.Failed(outs) {
+		return &exitError{code: 1}
+	}
+	return nil
+}
+
+func cmdUninstall(env *Env, args []string) error {
+	fs := newFlags(env, "uninstall", uninstallHelp)
+	if pos, err := parse(fs, args); err != nil {
+		return err
+	} else if len(pos) > 0 {
+		return badArgs("uninstall", "uninstall takes no arguments")
+	}
+	ienv, err := installEnv(env)
+	if err != nil {
+		return err
+	}
+	senv, err := skillsEnv(env)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signalContext()
+	defer stop()
+	hosts, err := install.RemoveServer(ctx, ienv, nil)
+	if err != nil {
+		return err
+	}
+	removed, err := skillinstall.Remove(senv, skillinstall.Options{})
+	if err != nil {
+		return err
+	}
+	if removed == nil {
+		removed = []skillinstall.Installed{}
+	}
+	return writeJSON(env, "uninstall", map[string]any{"self": ienv.Self, "hosts": hosts, "skills": removed})
 }
