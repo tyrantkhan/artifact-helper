@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
-	"github.com/tyrantkhan/claude-artifact-helper/skills"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/skills"
 )
 
 const name = "artifact-helper"

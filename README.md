@@ -1,8 +1,8 @@
 # artifact-helper
 
-[![CI](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/ci.yml)
-[![Release](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/claude-artifact-helper/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/tyrantkhan/claude-artifact-helper)](https://github.com/tyrantkhan/claude-artifact-helper/releases/latest)
+[![CI](https://github.com/tyrantkhan/artifact-helper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/artifact-helper/actions/workflows/ci.yml)
+[![Release](https://github.com/tyrantkhan/artifact-helper/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/artifact-helper/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/tyrantkhan/artifact-helper)](https://github.com/tyrantkhan/artifact-helper/releases/latest)
 
 Publish, edit, share and answer comments on [claude.ai artifacts](https://claude.ai/code/artifacts) from Claude Code, through the Claude subscription you already have.
 
@@ -22,19 +22,19 @@ A command takes well under a minute and a few model turns on `sonnet` by default
 
 ```sh
 # Script: installs the latest release to ~/.local/bin after checking its checksum
-curl -sSL https://raw.githubusercontent.com/tyrantkhan/claude-artifact-helper/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/tyrantkhan/artifact-helper/main/install.sh | sh
 
 # Homebrew (macOS and Linux)
 brew install --cask tyrantkhan/tap/artifact-helper
 
 # mise
-mise use -g github:tyrantkhan/claude-artifact-helper
+mise use -g github:tyrantkhan/artifact-helper
 
 # Go
-go install github.com/tyrantkhan/claude-artifact-helper/cmd/artifact-helper@latest
+go install github.com/tyrantkhan/artifact-helper/cmd/artifact-helper@latest
 ```
 
-Each [release](https://github.com/tyrantkhan/claude-artifact-helper/releases) also has archives for macOS, Linux and Windows on amd64 and arm64, with a `checksums.txt`. macOS builds are signed and notarized.
+Each [release](https://github.com/tyrantkhan/artifact-helper/releases) also has archives for macOS, Linux and Windows on amd64 and arm64, with a `checksums.txt`. macOS builds are signed and notarized.
 
 You also need [Claude Code](https://claude.com/claude-code) signed in to a Claude subscription:
 
@@ -50,11 +50,11 @@ On a machine without a browser, run `claude setup-token` on a machine that has o
 The plugin brings the skill that tells Claude when and how to use the commands, plus a `SessionStart` hook that nudges it toward them even when the skill listing shows the name without its description:
 
 ```sh
-claude plugin marketplace add tyrantkhan/claude-artifact-helper
+claude plugin marketplace add tyrantkhan/artifact-helper
 claude plugin install artifact-helper@artifact-helper
 ```
 
-Or, without the plugin, `artifact-helper install` writes the skill to `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`; `--local` for the project's `.claude/skills`), and `artifact-helper uninstall` removes it. The skill also installs like any Agent Skills package: `npx skills add https://github.com/tyrantkhan/claude-artifact-helper --skill artifact-helper --global`.
+Or, without the plugin, `artifact-helper install` writes the skill to `~/.claude/skills` (or `$CLAUDE_CONFIG_DIR/skills`; `--local` for the project's `.claude/skills`), and `artifact-helper uninstall` removes it. The skill also installs like any Agent Skills package: `npx skills add https://github.com/tyrantkhan/artifact-helper --skill artifact-helper --global`.
 
 The skill follows Orca's hybrid-stub pattern: the short [`SKILL.md`](skills/artifact-helper/SKILL.md) says when to engage and loads the version-matched guide from the binary with `artifact-helper get-skill`, so the command details never drift from the version you run. `install` rewrites only a copy it wrote that nobody changed; a copy you edited is left alone and reported, and `--force` replaces it after a backup.
 

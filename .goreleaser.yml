@@ -7,7 +7,7 @@ builds:
     binary: artifact-helper
     ldflags:
       - -s -w
-      - -X github.com/tyrantkhan/claude-artifact-helper/internal/cli.Version={{.Version}}
+      - -X github.com/tyrantkhan/artifact-helper/internal/cli.Version={{.Version}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -61,6 +61,6 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     url:
-      template: "https://github.com/tyrantkhan/claude-artifact-helper/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    homepage: "https://github.com/tyrantkhan/claude-artifact-helper"
+      template: "https://github.com/tyrantkhan/artifact-helper/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    homepage: "https://github.com/tyrantkhan/artifact-helper"
     description: "Publish, edit, share and answer comments on claude.ai artifacts from Claude Code"

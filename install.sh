@@ -1,9 +1,9 @@
 #!/bin/sh
 # install.sh: install the latest artifact-helper release into ~/.local/bin.
-# Usage: curl -sSL https://raw.githubusercontent.com/tyrantkhan/claude-artifact-helper/main/install.sh | sh
+# Usage: curl -sSL https://raw.githubusercontent.com/tyrantkhan/artifact-helper/main/install.sh | sh
 set -eu
 
-REPO="tyrantkhan/claude-artifact-helper"
+REPO="tyrantkhan/artifact-helper"
 NAME="artifact-helper"
 INSTALL_DIR="${HOME}/.local/bin"
 LATEST="https://github.com/${REPO}/releases/latest/download"

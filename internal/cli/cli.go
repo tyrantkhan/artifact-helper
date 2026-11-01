@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/headless"
-	"github.com/tyrantkhan/claude-artifact-helper/internal/skillinstall"
-	"github.com/tyrantkhan/claude-artifact-helper/skills"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
+	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
+	"github.com/tyrantkhan/artifact-helper/skills"
 )
 
 // Version is this build's version. release-please bumps it; release builds also set it with -ldflags.

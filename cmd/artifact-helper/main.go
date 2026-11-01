@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/tyrantkhan/claude-artifact-helper/internal/cli"
+	"github.com/tyrantkhan/artifact-helper/internal/cli"
 )
 
 func main() {
