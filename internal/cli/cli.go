@@ -120,6 +120,8 @@ Environment:
   ARTIFACT_HELPER_MAX_BUDGET_USD  cap passed to claude --max-budget-usd (default `+fmt.Sprint(headless.DefaultMaxBudgetUSD)+`; 0 for none)
   ARTIFACT_HELPER_VERBOSE         set to 1 to log each step on stderr
   ARTIFACT_HELPER_ALLOW_SHARE     set to 1 to let share run; see artifact-helper help share
+  ARTIFACT_HELPER_ACCOUNT         the email or organization claude must be signed in as; any other login is
+                                  refused with code wrong-account before anything runs
   CLAUDE_CODE_OAUTH_TOKEN                a token from claude setup-token, for a machine without a claude login
 `)
 }
@@ -206,6 +208,7 @@ func addOptionFlags(fs *flag.FlagSet, env *Env, opts *headless.Options) {
 	fs.Float64Var(&opts.MaxBudgetUSD, "max-budget-usd", opts.MaxBudgetUSD, "cap passed to claude --max-budget-usd; 0 for the default, negative for none")
 	fs.BoolFunc("verbose", "log each step on stderr", func(string) error { opts.Log = env.Stderr; return nil })
 	fs.BoolVar(&opts.AllowShare, "allow-share", opts.AllowShare, "let share run (see artifact-helper help share)")
+	fs.StringVar(&opts.Account, "account", opts.Account, "the email or organization claude must be signed in as")
 }
 
 // setup parses args for a command: the shared option flags plus the command's own, and exactly want
@@ -241,7 +244,7 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-const optionFlags = `[--claude <path>] [--model <name>] [--timeout <duration>] [--max-budget-usd <n>] [--verbose] [--allow-share]`
+const optionFlags = `[--claude <path>] [--model <name>] [--timeout <duration>] [--max-budget-usd <n>] [--verbose] [--allow-share] [--account <who>]`
 
 const publishHelp = `Usage: artifact-helper publish <file> [--title <text>] [--description <text>] [--icon <word>] [--url <link>]
                                       ` + optionFlags + `
@@ -506,13 +509,15 @@ const doctorHelp = `Usage: artifact-helper doctor [--claude <path>] [--model <na
 
 Check that the claude binary is found and signed in, and show the settings a run would use. "email" and
 "organization" name the signed-in account when claude reports them (a claude.ai login does; a bare token may not).
+With ARTIFACT_HELPER_ACCOUNT (or --account) set, the login must be that email or organization; any other is
+refused with code wrong-account, as every command refuses it before running anything.
 
 Result:
   {"ok": true, "command": "doctor", "claude": "/usr/local/bin/claude", "version": "2.1.0 (Claude Code)",
    "loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "organization": "Example Inc",
-   "model": "sonnet", "timeout": "5m0s"}
+   "expectedAccount": "Example Inc", "model": "sonnet", "timeout": "5m0s"}
 
-A refusal's code is no-claude, not-logged-in or claude-failed.
+A refusal's code is no-claude, not-logged-in, wrong-account, account-unverifiable or claude-failed.
 `
 
 func cmdDoctor(env *Env, args []string) error {

@@ -525,6 +525,59 @@ func TestDoctor(t *testing.T) {
 	}
 }
 
+func TestAccountCheck(t *testing.T) {
+	bin, record := fakeClaude(t, map[string]string{"": linkOK}, 0, "")
+	p := page(t, "p.html")
+	// The right account, by email or by organization, in any case.
+	for _, want := range []string{"me@example.com", "ME@Example.com", "example inc"} {
+		if _, err := Publish(context.Background(), Options{Claude: bin, Account: want}, Request{Path: p}); err != nil {
+			t.Fatalf("%s: %v", want, err)
+		}
+	}
+	r := runs(t, record)
+	if len(r) != 6 || r[0][1] != "auth" || r[1][1] != "-p" {
+		t.Fatalf("expected auth status before each run: %v", r)
+	}
+	// The wrong account refuses before any run.
+	_, err := Publish(context.Background(), Options{Claude: bin, Account: "other@example.com"}, Request{Path: p})
+	rf := wantRefusal(t, err, "wrong-account")
+	if !strings.Contains(rf.Message, "me@example.com in Example Inc") || !strings.Contains(rf.Message, "other@example.com") {
+		t.Fatalf("message = %q", rf.Message)
+	}
+	if r := runs(t, record); len(r) != 7 || r[6][1] != "auth" {
+		t.Fatalf("a refused account still ran claude: %v", r[len(r)-1])
+	}
+	h, err := Doctor(context.Background(), Options{Claude: bin, Account: "other@example.com"})
+	wantRefusal(t, err, "wrong-account")
+	if h == nil || h.ExpectedAccount != "other@example.com" || h.Email != "me@example.com" {
+		t.Fatalf("health = %+v", h)
+	}
+	if _, err := Doctor(context.Background(), Options{Claude: bin, Account: "Example Inc"}); err != nil {
+		t.Fatal(err)
+	}
+	// A login claude cannot name is refused too, with its own code.
+	authStatus = `{"loggedIn": true, "authMethod": "oauth_token"}`
+	t.Cleanup(func() {
+		authStatus = `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc"}`
+	})
+	bin, _ = fakeClaude(t, map[string]string{"": linkOK}, 0, "")
+	_, err = Publish(context.Background(), Options{Claude: bin, Account: "me@example.com"}, Request{Path: p})
+	wantRefusal(t, err, "account-unverifiable")
+	// Without an expected account, nothing is checked.
+	if _, err := Publish(context.Background(), Options{Claude: bin}, Request{Path: p}); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := OptionsFromEnv(func(k string) string {
+		if k == "ARTIFACT_HELPER_ACCOUNT" {
+			return " Example Inc "
+		}
+		return ""
+	})
+	if o.Account != "Example Inc" {
+		t.Fatalf("account = %q", o.Account)
+	}
+}
+
 func TestValidURL(t *testing.T) {
 	for s, want := range map[string]bool{
 		"https://claude.ai/artifact/Abc_12-3": true, "https://claude.ai/code/artifact/0f1e2d3c": true,

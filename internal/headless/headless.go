@@ -44,6 +44,7 @@ const (
 	envTimeout = "ARTIFACT_HELPER_TIMEOUT"
 	envBudget  = "ARTIFACT_HELPER_MAX_BUDGET_USD"
 	envShare   = "ARTIFACT_HELPER_ALLOW_SHARE"
+	envAccount = "ARTIFACT_HELPER_ACCOUNT"
 )
 
 // Refusal is an error the caller can act on: a stable code, what went wrong, and what to do about it.
@@ -86,6 +87,10 @@ type Options struct {
 	// person confirm it on a card; the headless run instead skips permission checks for that one call, so it
 	// is off unless the operator turns it on.
 	AllowShare bool
+	// Account, when set, is the email or organization name claude must be signed in as. Every run checks it
+	// first and refuses with code "wrong-account" when the login is another, so a machine with several Claude
+	// accounts never publishes to the wrong one.
+	Account string
 }
 
 // OptionsFromEnv reads the ARTIFACT_HELPER_* variables through getenv. Variables left unset keep their
@@ -114,6 +119,7 @@ func OptionsFromEnv(getenv func(string) string) (Options, error) {
 	if v := getenv(envShare); v != "" && v != "0" && !strings.EqualFold(v, "false") {
 		o.AllowShare = true
 	}
+	o.Account = strings.TrimSpace(getenv(envAccount))
 	return o, nil
 }
 
@@ -877,6 +883,11 @@ func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, b
 	if err != nil {
 		return nil, err
 	}
+	if opts.Account != "" {
+		if _, err := checkAccount(ctx, opts, bin); err != nil {
+			return nil, err
+		}
+	}
 	args := Args(opts, tools, schema, prompt, bypass)
 	opts.logf("running %s %s in %s", bin, strings.Join(args[:len(args)-1], " "), orDot(dir))
 
@@ -1003,8 +1014,10 @@ type Health struct {
 	// a bare token may not).
 	Email        string `json:"email,omitempty"`
 	Organization string `json:"organization,omitempty"`
-	Model        string `json:"model"`
-	Timeout      string `json:"timeout"`
+	// ExpectedAccount is ARTIFACT_HELPER_ACCOUNT, when set; the login must match it.
+	ExpectedAccount string `json:"expectedAccount,omitempty"`
+	Model           string `json:"model"`
+	Timeout         string `json:"timeout"`
 }
 
 // Account says who is signed in, in a few words, or "" when claude did not say.
@@ -1020,29 +1033,42 @@ func (h *Health) Account() string {
 	return ""
 }
 
-// Doctor checks that the claude binary is present and signed in. A failed check is a Refusal.
-func Doctor(ctx context.Context, opts Options) (*Health, error) {
-	bin, err := opts.Binary()
-	if err != nil {
-		return nil, err
+// account is what claude auth status says about the login.
+type account struct {
+	LoggedIn     bool
+	AuthMethod   string
+	Email        string
+	Organization string
+}
+
+// Matches reports whether the login is the account named by want: its email or organization name, compared
+// without regard to case.
+func (a account) Matches(want string) bool {
+	want = strings.TrimSpace(want)
+	return want != "" && (strings.EqualFold(a.Email, want) || strings.EqualFold(a.Organization, want))
+}
+
+func (a account) String() string {
+	switch {
+	case a.Email != "" && a.Organization != "":
+		return a.Email + " in " + a.Organization
+	case a.Email != "":
+		return a.Email
+	case a.Organization != "":
+		return a.Organization
 	}
-	h := &Health{Claude: bin, Model: opts.model(), Timeout: opts.timeout().String()}
-	exec1 := func(args ...string) (string, error) {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, bin, args...)
-		cmd.Env = opts.Environ
-		cmd.Stdin = strings.NewReader("")
-		out, err := cmd.CombinedOutput()
-		return strings.TrimSpace(string(out)), err
-	}
-	v, err := exec1("--version")
-	if err != nil {
-		return nil, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude --version failed (%v): %s", err, tail(v, 500)),
-			Fix: "reinstall Claude Code, or point " + envClaude + " at a working binary"}
-	}
-	h.Version = v
-	out, err := exec1("auth", "status")
+	return "an account claude does not name (" + a.AuthMethod + ")"
+}
+
+// readAuthStatus runs claude auth status and reads what it says.
+func readAuthStatus(ctx context.Context, opts Options, bin string) (account, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "auth", "status")
+	cmd.Env = opts.Environ
+	cmd.Stdin = strings.NewReader("")
+	raw, err := cmd.CombinedOutput()
+	out := strings.TrimSpace(string(raw))
 	var status struct {
 		LoggedIn         bool   `json:"loggedIn"`
 		AuthMethod       string `json:"authMethod"`
@@ -1052,19 +1078,75 @@ func Doctor(ctx context.Context, opts Options) (*Health, error) {
 	}
 	if jerr := json.Unmarshal([]byte(out), &status); jerr != nil {
 		if err != nil {
-			return nil, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude auth status failed (%v): %s", err, tail(out, 500)),
+			return account{}, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude auth status failed (%v): %s", err, tail(out, 500)),
 				Fix: "update Claude Code (`claude update`); this tool needs `claude auth status`"}
 		}
-		return nil, &Refusal{Code: "bad-output", Message: "claude auth status printed no JSON: " + tail(out, 500),
+		return account{}, &Refusal{Code: "bad-output", Message: "claude auth status printed no JSON: " + tail(out, 500),
 			Fix: "update Claude Code (`claude update`)"}
 	}
-	h.LoggedIn, h.AuthMethod, h.Email = status.LoggedIn, status.AuthMethod, status.Email
-	h.Organization = status.OrgName
-	if h.Organization == "" {
-		h.Organization = status.OrganizationName
+	a := account{LoggedIn: status.LoggedIn, AuthMethod: status.AuthMethod, Email: status.Email, Organization: status.OrgName}
+	if a.Organization == "" {
+		a.Organization = status.OrganizationName
 	}
+	return a, nil
+}
+
+// checkAccount refuses unless claude is signed in as opts.Account.
+func checkAccount(ctx context.Context, opts Options, bin string) (account, error) {
+	a, err := readAuthStatus(ctx, opts, bin)
+	if err != nil {
+		return a, err
+	}
+	if !a.LoggedIn {
+		return a, &Refusal{Code: "not-logged-in", Message: "claude is not signed in; " + envAccount + " expects " + opts.Account, Fix: loginFix}
+	}
+	if a.Email == "" && a.Organization == "" {
+		return a, &Refusal{Code: "account-unverifiable",
+			Message: fmt.Sprintf("%s expects %s, but this login (%s) names no email or organization, so it cannot be checked", envAccount, opts.Account, a.AuthMethod),
+			Fix:     "sign in with `claude auth login` so claude reports the account, or unset " + envAccount}
+	}
+	if !a.Matches(opts.Account) {
+		return a, &Refusal{Code: "wrong-account",
+			Message: fmt.Sprintf("claude is signed in as %s, but %s expects %s; nothing was run", a, envAccount, opts.Account),
+			Fix:     "run `claude auth login` with the " + opts.Account + " account, or set " + envAccount + " to the account you mean"}
+	}
+	return a, nil
+}
+
+// Doctor checks that the claude binary is present and signed in, as the expected account when one is set.
+// A failed check is a Refusal; the Health comes back with it when the binary ran.
+func Doctor(ctx context.Context, opts Options) (*Health, error) {
+	bin, err := opts.Binary()
+	if err != nil {
+		return nil, err
+	}
+	h := &Health{Claude: bin, Model: opts.model(), Timeout: opts.timeout().String(), ExpectedAccount: opts.Account}
+	{
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "--version")
+		cmd.Env = opts.Environ
+		cmd.Stdin = strings.NewReader("")
+		out, err := cmd.CombinedOutput()
+		v := strings.TrimSpace(string(out))
+		if err != nil {
+			return nil, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude --version failed (%v): %s", err, tail(v, 500)),
+				Fix: "reinstall Claude Code, or point " + envClaude + " at a working binary"}
+		}
+		h.Version = v
+	}
+	a, err := readAuthStatus(ctx, opts, bin)
+	if err != nil {
+		return nil, err
+	}
+	h.LoggedIn, h.AuthMethod, h.Email, h.Organization = a.LoggedIn, a.AuthMethod, a.Email, a.Organization
 	if !h.LoggedIn {
 		return h, &Refusal{Code: "not-logged-in", Message: "claude is not signed in", Fix: loginFix}
+	}
+	if opts.Account != "" {
+		if _, err := checkAccount(ctx, opts, bin); err != nil {
+			return h, err
+		}
 	}
 	return h, nil
 }

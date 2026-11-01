@@ -28,6 +28,8 @@ Every command prints one JSON object; a refusal has `"ok": false` and an `error`
 
 If a command fails with `no-claude` or `not-logged-in`, run `artifact-helper doctor` and give the human its `fix`: install Claude Code, or run `claude auth login`. Do not retry until they have.
 
+If it fails with `wrong-account`, this machine is signed in to a different Claude account than the one this install is meant to publish from; the message names both. Tell the human, and do not sign in, sign out or change `ARTIFACT_HELPER_ACCOUNT` yourself.
+
 ## 2. Publish
 
 Write the page as a complete HTML document with a `<title>`, a `<meta name="viewport">`, an explicit `body` background, colors that work in light and dark mode, and a layout that fits a phone width. Inline the styles and scripts; load libraries only from a public CDN by exact version.
