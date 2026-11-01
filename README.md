@@ -34,7 +34,7 @@ mise use -g github:tyrantkhan/claude-artifact-helper
 go install github.com/tyrantkhan/claude-artifact-helper/cmd/claude-artifact-helper@latest
 ```
 
-Each [release](https://github.com/tyrantkhan/claude-artifact-helper/releases) also has archives for macOS, Linux and Windows on amd64 and arm64, with a `checksums.txt`.
+Each [release](https://github.com/tyrantkhan/claude-artifact-helper/releases) also has archives for macOS, Linux and Windows on amd64 and arm64, with a `checksums.txt`. macOS builds are signed and notarized.
 
 You also need [Claude Code](https://claude.com/claude-code) signed in to a Claude subscription:
 
@@ -47,22 +47,12 @@ On a machine without a browser, run `claude setup-token` on a machine that has o
 
 ## Teach your agent
 
-The skill that teaches an agent when and how to use the tools follows Orca's hybrid-stub pattern: the short [`SKILL.md`](skills/claude-artifact-helper/SKILL.md) a host installs says when to engage and loads the version-matched guide from the binary with `claude-artifact-helper skills get claude-artifact-helper`, so the tool details never drift from the version you run.
+The skill that teaches an agent when and how to use the tools follows Orca's hybrid-stub pattern: the short [`SKILL.md`](skills/claude-artifact-helper/SKILL.md) a host installs says when to engage and loads the version-matched guide from the binary with `claude-artifact-helper get-skill`, so the tool details never drift from the version you run.
 
-One command sets this machine up: it registers the MCP server with every agent host found here, then installs the skill for every agent found here.
-
-```sh
-claude-artifact-helper install
-```
-
-Or do the two parts yourself. `mcp add` registers the server through each host's own command (`claude mcp add`, `codex mcp add`, `gemini mcp add`) or, for Cursor, in `~/.cursor/mcp.json`. `skills install` writes the stub to the shared `~/.agents/skills` folder and links it from each agent's own skills folder, the way Orca's installer does; `skills update` rewrites only copies it wrote that nobody changed, and `--force` replaces the rest after a backup.
+One command sets this machine up. It registers the MCP server with every agent host found here, through each host's own command (`claude mcp add`, `codex mcp add`, `gemini mcp add`) or, for Cursor, in `~/.cursor/mcp.json`. Then it installs the skill the way Orca's installer does: the stub goes to the shared `~/.agents/skills` folder and each agent's own skills folder gets a link to it. Run it again after updating: it rewrites only copies it wrote that nobody changed, and `--force` replaces the rest after a backup.
 
 ```sh
-claude-artifact-helper mcp add                      # every host found here; or: mcp add codex cursor
-claude-artifact-helper skills install                # every agent found here
-claude-artifact-helper skills install --agent claude,codex --dry-run
-claude-artifact-helper skills update --all
-claude-artifact-helper skills installed
+claude-artifact-helper install              # or --mcp-only, --skill-only, --dry-run, --force
 claude-artifact-helper uninstall
 ```
 
@@ -80,7 +70,7 @@ claude plugin marketplace add tyrantkhan/claude-artifact-helper
 claude plugin install claude-artifact-helper@claude-artifact-helper
 ```
 
-Or without the plugin: `claude-artifact-helper mcp add claude` and `claude-artifact-helper skills install --agent claude`.
+Or without the plugin: `claude-artifact-helper install`.
 
 </details>
 
@@ -92,14 +82,14 @@ codex plugin marketplace add tyrantkhan/claude-artifact-helper
 codex plugin add claude-artifact-helper@claude-artifact-helper
 ```
 
-Or without the plugin: `claude-artifact-helper mcp add codex` and `claude-artifact-helper skills install --agent codex`, which writes the skill to `~/.agents/skills/`, where Codex reads it.
+Or without the plugin: `claude-artifact-helper install`, which runs `codex mcp add` and writes the skill to `~/.agents/skills/`, where Codex reads it.
 
 </details>
 
 <details>
 <summary>Cursor</summary>
 
-`claude-artifact-helper mcp add cursor` adds the server to `~/.cursor/mcp.json`, and `skills install --agent cursor` links the skill into `~/.cursor/skills/`. By hand, the server entry is:
+`claude-artifact-helper install` adds the server to `~/.cursor/mcp.json` and links the skill into `~/.cursor/skills/`. By hand, the server entry is:
 
 ```json
 {
@@ -121,7 +111,7 @@ Or without the plugin: `claude-artifact-helper mcp add codex` and `claude-artifa
 gemini extensions install https://github.com/tyrantkhan/claude-artifact-helper
 ```
 
-Or without the extension: `claude-artifact-helper mcp add gemini` and `skills install --agent gemini`.
+Or without the extension: `claude-artifact-helper install`.
 
 </details>
 
@@ -143,7 +133,7 @@ Command `claude-artifact-helper`, arguments `["serve"]`, transport stdio. Put co
 
 </details>
 
-If the binary is not on the PATH the client starts servers with, give its full path as the command; `mcp add` registers the binary's own absolute path.
+If the binary is not on the PATH the client starts servers with, give its full path as the command; `install` registers the binary's own absolute path.
 
 ## Tools
 
@@ -182,7 +172,7 @@ claude-artifact-helper reply https://claude.ai/artifact/<id> <thread id> --text 
 claude-artifact-helper resolve https://claude.ai/artifact/<id> <thread id>
 claude-artifact-helper share https://claude.ai/artifact/<id> --people sam@example.com --access view --allow-share
 claude-artifact-helper doctor
-claude-artifact-helper skills get claude-artifact-helper   # the guide an agent loads
+claude-artifact-helper get-skill                          # the guide an agent loads
 claude-artifact-helper help <command>
 ```
 

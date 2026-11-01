@@ -15,7 +15,7 @@ func TestEveryShippedStubDigestIsReleased(t *testing.T) {
 		if StubName(s.Stub) != s.Name {
 			t.Errorf("%s: the stub's frontmatter names %q", s.Name, StubName(s.Stub))
 		}
-		if len(s.Guide) == 0 || !strings.Contains(string(s.Stub), "skills get "+s.Name) {
+		if len(s.Guide) == 0 || !strings.Contains(string(s.Stub), "get-skill") {
 			t.Errorf("%s: the stub does not say how to load its guide", s.Name)
 		}
 	}

@@ -17,7 +17,7 @@ installed on this machine, so the tool and command details never drift from the 
 ## Load the version-matched guide before publishing or touching an artifact
 
 ```text
-claude-artifact-helper skills get claude-artifact-helper
+claude-artifact-helper get-skill
 ```
 
 The same operations exist as MCP tools (`publish_artifact`, `read_artifact`, `edit_artifact`,
@@ -26,8 +26,8 @@ The same operations exist as MCP tools (`publish_artifact`, `read_artifact`, `ed
 them. Use the CLI's `help <command>` for anything the guide does not cover; do not guess flags.
 
 If `claude-artifact-helper` cannot run, say so, and do not invent another way to publish. If
-`skills get` is unknown, the installed binary is older than this stub: updating it restores
-the guide.
+`get-skill` is unknown, the installed binary is older than this stub: updating it restores the
+guide.
 
 ## Rules that hold even before the guide loads
 
