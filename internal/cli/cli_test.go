@@ -154,6 +154,33 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	}
 }
 
+func TestShare(t *testing.T) {
+	ok := `{"type":"result","subtype":"success","structured_output":{"shared":true,"message":"Shared","error":""}}`
+	bin := fakeClaude(t, map[string]string{"share": ok}, "")
+	env := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin}
+	code, o, _ := run(t, env, "", "share", link, "--org")
+	if code != 1 || result(t, o)["error"].(map[string]any)["code"] != "share-disabled" {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+	code, o, _ = run(t, env, "", "share", link, "--org", "--allow-share")
+	res := result(t, o)
+	if code != 0 || res["mode"] != "org" || res["message"] != "Shared" {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+	env["CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE"] = "1"
+	code, o, _ = run(t, env, "", "share", link, "--people", "sam@example.com, Ada", "--access", "view")
+	res = result(t, o)
+	if code != 0 || res["mode"] != "people" || len(res["people"].([]any)) != 2 || res["access"] != "view" {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+	for _, args := range [][]string{{"share", link}, {"share", link, "--org", "--people", "Ada"}, {"share", link, "--people", "Ada", "--access", "edit"}} {
+		code, o, _ = run(t, env, "", args...)
+		if code != 1 || result(t, o)["error"].(map[string]any)["code"] != "invalid-args" {
+			t.Errorf("%v: exit %d: %s", args, code, o)
+		}
+	}
+}
+
 func TestRefusalsAreJSONOnStdout(t *testing.T) {
 	bin := fakeClaude(t, map[string]string{"": ""}, "")
 	withBin := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": bin}

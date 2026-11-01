@@ -52,6 +52,7 @@ func commands() []command {
 		{"comments", "List the comment threads on an artifact", commentsHelp, cmdComments},
 		{"reply", "Reply in a comment thread, optionally resolving it", replyHelp, cmdReply},
 		{"resolve", "Mark a comment thread resolved", resolveHelp, cmdResolve},
+		{"share", "Share an artifact with the organization or named people in it", shareHelp, cmdShare},
 		{"doctor", "Check that Claude Code is installed and signed in", doctorHelp, cmdDoctor},
 	}
 }
@@ -112,6 +113,7 @@ Environment:
   CLAUDE_ARTIFACT_HELPER_TIMEOUT         how long one run may take (default `+headless.DefaultTimeout.String()+`)
   CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD  cap passed to claude --max-budget-usd (default `+fmt.Sprint(headless.DefaultMaxBudgetUSD)+`; 0 for none)
   CLAUDE_ARTIFACT_HELPER_VERBOSE         set to 1 to log each step on stderr
+  CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE     set to 1 to let share run; see claude-artifact-helper help share
   CLAUDE_CODE_OAUTH_TOKEN                a token from claude setup-token, for a machine without a claude login
 `)
 }
@@ -197,6 +199,7 @@ func addOptionFlags(fs *flag.FlagSet, env *Env, opts *headless.Options) {
 	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "how long one run may take")
 	fs.Float64Var(&opts.MaxBudgetUSD, "max-budget-usd", opts.MaxBudgetUSD, "cap passed to claude --max-budget-usd; 0 for the default, negative for none")
 	fs.BoolFunc("verbose", "log each step on stderr", func(string) error { opts.Log = env.Stderr; return nil })
+	fs.BoolVar(&opts.AllowShare, "allow-share", opts.AllowShare, "let share run (see claude-artifact-helper help share)")
 }
 
 // setup parses args for a command: the shared option flags plus the command's own, and exactly want
@@ -232,7 +235,7 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-const optionFlags = `[--claude <path>] [--model <name>] [--timeout <duration>] [--max-budget-usd <n>] [--verbose]`
+const optionFlags = `[--claude <path>] [--model <name>] [--timeout <duration>] [--max-budget-usd <n>] [--verbose] [--allow-share]`
 
 const serveHelp = `Usage: claude-artifact-helper serve ` + optionFlags + `
 
@@ -246,6 +249,7 @@ Tools (each takes the artifact's claude.ai link as "url" where one is needed):
   read_comments     {"url", "thread_id"?, "cursor"?}                       -> {"threads", "raw", "more_cursor"?}
   reply_to_comment  {"url", "thread_id", "text", "resolve"?}               -> {"replied", "resolved", "message"}
   resolve_comment   {"url", "thread_id"}                                   -> {"replied", "resolved", "message"}
+  share_artifact    {"url", "mode": "org"|"people", "people"?, "access"?}  -> {"shared", "message"}  (needs --allow-share)
   check_setup       {}                                                     -> {"claude", "version", "loggedIn", ...}
 
 A failed call returns isError with {"code", "message", "fix"} as its text.
@@ -482,6 +486,59 @@ func cmdResolve(env *Env, args []string) error {
 		return err
 	}
 	return writeJSON(env, "resolve", res)
+}
+
+const shareHelp = `Usage: claude-artifact-helper share <link> --org ` + optionFlags + `
+       claude-artifact-helper share <link> --people <name or email>[,...] [--access view|comment] ` + optionFlags + `
+
+Give everyone in your organization (--org, always with comment access), or the people named (--people, view or
+comment access, default comment), access to an artifact you own. Artifacts cannot be made public this way;
+nobody outside the organization can be added.
+
+Sharing is off until you turn it on with --allow-share or CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE=1: a share changes
+who can open the artifact, and Claude Code normally has you confirm it on a card, which the headless run skips
+instead. Without the switch the refusal's code is share-disabled, and you can share from the artifact's Share
+menu on claude.ai.
+
+Result:
+  {"ok": true, "command": "share", "url": "https://claude.ai/artifact/<id>", "mode": "people", "people": ["sam@example.com"],
+   "access": "view", "message": "<what the Artifact tool said>", "model": "sonnet", "turns": 2, "costUSD": 0.02, "durationMs": 8000}
+`
+
+func cmdShare(env *Env, args []string) error {
+	var org bool
+	var people, access string
+	opts, pos, err := setup(env, "share", shareHelp, args, 1, func(fs *flag.FlagSet) {
+		fs.BoolVar(&org, "org", false, "share with everyone in the organization")
+		fs.StringVar(&people, "people", "", "comma-separated names or emails of organization members to share with")
+		fs.StringVar(&access, "access", "", "with --people: view or comment (default comment)")
+	})
+	if err != nil {
+		return err
+	}
+	req := headless.ShareRequest{URL: pos[0], Access: access}
+	switch {
+	case org && people != "":
+		return badArgs("share", "pass --org or --people, not both")
+	case org:
+		req.Mode = "org"
+	case people != "":
+		req.Mode = "people"
+		for _, p := range strings.Split(people, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				req.People = append(req.People, p)
+			}
+		}
+	default:
+		return badArgs("share", "pass --org or --people")
+	}
+	ctx, stop := signalContext()
+	defer stop()
+	res, err := headless.Share(ctx, opts, req)
+	if err != nil {
+		return err
+	}
+	return writeJSON(env, "share", res)
 }
 
 const doctorHelp = `Usage: claude-artifact-helper doctor [--claude <path>] [--model <name>]

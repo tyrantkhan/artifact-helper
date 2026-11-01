@@ -399,17 +399,90 @@ func TestReplyAndResolve(t *testing.T) {
 	wantRefusal(t, err, "thread-refused")
 }
 
+func TestShare(t *testing.T) {
+	ok := `{"type":"result","subtype":"success","num_turns":2,"structured_output":{"shared":true,"message":"Shared with 2 people","error":""}}`
+	bin, record := fakeClaude(t, map[string]string{"share": ok}, 0, "")
+	// Off by default.
+	_, err := Share(context.Background(), Options{Claude: bin}, ShareRequest{URL: link, Mode: "org"})
+	wantRefusal(t, err, "share-disabled")
+	if _, err := os.Stat(record); err == nil {
+		t.Fatal("a disabled share ran claude")
+	}
+	on := Options{Claude: bin, AllowShare: true}
+	res, err := Share(context.Background(), on, ShareRequest{URL: link, Mode: "people", People: []string{"sam@example.com", "Ada"}, Access: "view"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != "people" || res.Access != "view" || len(res.People) != 2 || res.Message != "Shared with 2 people" || res.Turns != 2 {
+		t.Fatalf("result = %+v", res)
+	}
+	args := runs(t, record)[0]
+	if !contains(args, "bypassPermissions") || !contains(args, "--dangerously-skip-permissions") || contains(args, "--permission-prompts") {
+		t.Fatalf("a share must bypass permissions: %v", args)
+	}
+	if p := args[len(args)-1]; !strings.Contains(p, `{"access":"view","action":"share","mode":"people","people":["sam@example.com","Ada"],"url":"`+link+`"}`) {
+		t.Fatalf("prompt = %s", p)
+	}
+	res, err = Share(context.Background(), on, ShareRequest{URL: link, Mode: "people", People: []string{"Ada"}})
+	if err != nil || res.Access != "comment" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	res, err = Share(context.Background(), on, ShareRequest{URL: link, Mode: "org"})
+	if err != nil || res.Access != "" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	r := runs(t, record)
+	if p := r[len(r)-1][len(r[len(r)-1])-1]; !strings.Contains(p, `{"action":"share","mode":"org","url":"`+link+`"}`) {
+		t.Fatalf("prompt = %s", p)
+	}
+	// Publishing never bypasses.
+	if _, err := Publish(context.Background(), Options{Claude: fakeBin(t, linkOK), AllowShare: true}, Request{Path: page(t, "p.html")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		req  ShareRequest
+		code string
+	}{
+		{ShareRequest{URL: link, Mode: "public"}, "invalid-args"},
+		{ShareRequest{URL: link, Mode: "org", People: []string{"Ada"}}, "invalid-args"},
+		{ShareRequest{URL: link, Mode: "org", Access: "view"}, "invalid-args"},
+		{ShareRequest{URL: link, Mode: "people"}, "invalid-args"},
+		{ShareRequest{URL: link, Mode: "people", People: []string{"Ada"}, Access: "edit"}, "invalid-args"},
+		{ShareRequest{URL: link, Mode: "people", People: []string{"a\nb"}}, "invalid-args"},
+		{ShareRequest{URL: "nope", Mode: "org"}, "invalid-url"},
+	} {
+		_, err := Share(context.Background(), on, c.req)
+		wantRefusal(t, err, c.code)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"share": `{"type":"result","subtype":"success","structured_output":{"shared":false,"message":"","error":"you do not own this artifact"}}`}, 0, "")
+	_, err = Share(context.Background(), Options{Claude: bin, AllowShare: true}, ShareRequest{URL: link, Mode: "org"})
+	wantRefusal(t, err, "share-refused")
+}
+
+func fakeBin(t *testing.T, stdout string) string {
+	t.Helper()
+	bin, record := fakeClaude(t, map[string]string{"": stdout}, 0, "")
+	t.Cleanup(func() {
+		for _, args := range runs(t, record) {
+			if contains(args, "bypassPermissions") {
+				t.Errorf("a run bypassed permissions: %v", args)
+			}
+		}
+	})
+	return bin
+}
+
 func TestOptionsFromEnv(t *testing.T) {
 	env := map[string]string{"CLAUDE_ARTIFACT_HELPER_CLAUDE": "/x/claude", "CLAUDE_ARTIFACT_HELPER_MODEL": "opus",
-		"CLAUDE_ARTIFACT_HELPER_TIMEOUT": "90s", "CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD": "0"}
+		"CLAUDE_ARTIFACT_HELPER_TIMEOUT": "90s", "CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD": "0", "CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE": "1"}
 	o, err := OptionsFromEnv(func(k string) string { return env[k] })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.Claude != "/x/claude" || o.Model != "opus" || o.Timeout != 90*time.Second || o.budget() > 0 {
+	if o.Claude != "/x/claude" || o.Model != "opus" || o.Timeout != 90*time.Second || o.budget() > 0 || !o.AllowShare {
 		t.Fatalf("options = %+v", o)
 	}
-	if args := Args(o, "Artifact", "{}", "p"); contains(args, "--max-budget-usd") {
+	if args := Args(o, "Artifact", "{}", "p", false); contains(args, "--max-budget-usd") {
 		t.Fatalf("a zero budget must pass no cap: %v", args)
 	}
 	for k, v := range map[string]string{"CLAUDE_ARTIFACT_HELPER_TIMEOUT": "soon", "CLAUDE_ARTIFACT_HELPER_MAX_BUDGET_USD": "-3"} {
@@ -424,7 +497,7 @@ func TestOptionsFromEnv(t *testing.T) {
 		}
 	}
 	o, _ = OptionsFromEnv(func(string) string { return "" })
-	if o.model() != DefaultModel || o.timeout() != DefaultTimeout || o.budget() != DefaultMaxBudgetUSD {
+	if o.model() != DefaultModel || o.timeout() != DefaultTimeout || o.budget() != DefaultMaxBudgetUSD || o.AllowShare {
 		t.Fatalf("defaults = %+v", o)
 	}
 }

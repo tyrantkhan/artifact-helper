@@ -90,6 +90,20 @@ type ResolveInput struct {
 	ThreadID string `json:"thread_id" jsonschema:"The thread to mark resolved, from read_comments."`
 }
 
+// ShareInput is the share_artifact tool's input.
+type ShareInput struct {
+	URL    string   `json:"url" jsonschema:"The artifact's claude.ai link; the account must own it."`
+	Mode   string   `json:"mode" jsonschema:"org shares with everyone in the account's organization (always with comment access); people shares with the ones named."`
+	People []string `json:"people,omitempty" jsonschema:"For mode people: names or emails of organization members."`
+	Access string   `json:"access,omitempty" jsonschema:"For mode people: view or comment (default comment)."`
+}
+
+// ShareOutput is the share_artifact tool's result.
+type ShareOutput struct {
+	Shared  bool   `json:"shared" jsonschema:"True when the share was confirmed."`
+	Message string `json:"message" jsonschema:"What the Artifact tool said."`
+}
+
 // ThreadOutput is the result of reply_to_comment and resolve_comment.
 type ThreadOutput struct {
 	Replied  bool   `json:"replied" jsonschema:"True when the reply was posted."`
@@ -202,6 +216,26 @@ func New(opts headless.Options, version string) *mcp.Server {
 		}
 		return text(fmt.Sprintf("Resolved thread %s on %s", res.ThreadID, res.URL)),
 			ThreadOutput{Replied: res.Replied, Resolved: res.Resolved, Message: res.Message}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:  "share_artifact",
+		Title: "Share an artifact within the organization",
+		Description: "Give everyone in the account's organization, or named people in it, access to an artifact the account owns. " +
+			"Artifacts cannot be made public this way. The server refuses with code share-disabled unless its operator turned " +
+			"sharing on (CLAUDE_ARTIFACT_HELPER_ALLOW_SHARE=1), because the headless run skips the confirmation Claude Code " +
+			"would ask of the person; then the person can share from the artifact's Share menu on claude.ai instead." + failNote,
+		Annotations: open("Share an artifact within the organization"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ShareInput) (*mcp.CallToolResult, ShareOutput, error) {
+		res, err := headless.Share(ctx, opts, headless.ShareRequest{URL: in.URL, Mode: in.Mode, People: in.People, Access: in.Access})
+		if err != nil {
+			return nil, ShareOutput{}, asToolError(err)
+		}
+		with := "the organization"
+		if res.Mode == "people" {
+			with = fmt.Sprintf("%d people (%s)", len(res.People), res.Access)
+		}
+		return text(fmt.Sprintf("Shared %s with %s", res.URL, with)), ShareOutput{Shared: true, Message: res.Message}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{

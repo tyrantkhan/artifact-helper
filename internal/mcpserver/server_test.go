@@ -94,6 +94,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 	required := map[string]string{
 		"publish_artifact": `"required":["file_path"]`, "read_artifact": `"required":["url"]`, "edit_artifact": `"required":["url","edits"]`,
 		"read_comments": `"required":["url"]`, "reply_to_comment": `"required":["url","thread_id","text"]`, "resolve_comment": `"required":["url","thread_id"]`,
+		"share_artifact": `"required":["url","mode"]`,
 	}
 	var names []string
 	for _, tool := range res.Tools {
@@ -103,7 +104,7 @@ func TestToolsAreListedWithSchemas(t *testing.T) {
 			t.Errorf("%s schema lacks %s: %s", tool.Name, want, b)
 		}
 	}
-	if strings.Join(names, ",") != "check_setup,edit_artifact,publish_artifact,read_artifact,read_comments,reply_to_comment,resolve_comment" {
+	if strings.Join(names, ",") != "check_setup,edit_artifact,publish_artifact,read_artifact,read_comments,reply_to_comment,resolve_comment,share_artifact" {
 		t.Fatalf("tools = %v", names)
 	}
 }
@@ -185,6 +186,25 @@ func TestComments(t *testing.T) {
 	wantRefusal(t, res, text, "invalid-thread")
 	res, text, _ = call(t, sess, "read_comments", map[string]any{"url": "https://example.com"})
 	wantRefusal(t, res, text, "invalid-url")
+}
+
+func TestShareArtifact(t *testing.T) {
+	ok := `{"type":"result","subtype":"success","structured_output":{"shared":true,"message":"Shared with the organization","error":""}}`
+	bin := fakeClaude(t, map[string]string{"share": ok}, "")
+	sess := connect(t, headless.Options{Claude: bin})
+	res, text, _ := call(t, sess, "share_artifact", map[string]any{"url": link, "mode": "org"})
+	wantRefusal(t, res, text, "share-disabled")
+	sess = connect(t, headless.Options{Claude: bin, AllowShare: true})
+	res, text, sc := call(t, sess, "share_artifact", map[string]any{"url": link, "mode": "org"})
+	if res.IsError || text != "Shared "+link+" with the organization" || sc != `{"message":"Shared with the organization","shared":true}` {
+		t.Fatalf("text=%q structured=%s", text, sc)
+	}
+	res, text, _ = call(t, sess, "share_artifact", map[string]any{"url": link, "mode": "people", "people": []string{"sam@example.com"}, "access": "view"})
+	if res.IsError || text != "Shared "+link+" with 1 people (view)" {
+		t.Fatalf("text=%q", text)
+	}
+	res, text, _ = call(t, sess, "share_artifact", map[string]any{"url": link, "mode": "everyone"})
+	wantRefusal(t, res, text, "invalid-args")
 }
 
 func TestCheckSetup(t *testing.T) {
