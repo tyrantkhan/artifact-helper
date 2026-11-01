@@ -44,7 +44,7 @@ const (
 	envTimeout = "ARTIFACT_HELPER_TIMEOUT"
 	envBudget  = "ARTIFACT_HELPER_MAX_BUDGET_USD"
 	envShare   = "ARTIFACT_HELPER_ALLOW_SHARE"
-	envAccount = "ARTIFACT_HELPER_ACCOUNT"
+	envOrg     = "ARTIFACT_HELPER_ORGANIZATION"
 )
 
 // Refusal is an error the caller can act on: a stable code, what went wrong, and what to do about it.
@@ -87,10 +87,10 @@ type Options struct {
 	// person confirm it on a card; the headless run instead skips permission checks for that one call, so it
 	// is off unless the operator turns it on.
 	AllowShare bool
-	// Account, when set, is the email or organization name claude must be signed in as. Every run checks it
-	// first and refuses with code "wrong-account" when the login is another, so a machine with several Claude
-	// accounts never publishes to the wrong one.
-	Account string
+	// Organization, when set, is the organization claude must be signed in to. Every run checks it first and
+	// refuses with code "wrong-organization" when the login belongs to another, so a machine with several
+	// Claude accounts never publishes to the wrong one.
+	Organization string
 }
 
 // OptionsFromEnv reads the ARTIFACT_HELPER_* variables through getenv. Variables left unset keep their
@@ -119,7 +119,7 @@ func OptionsFromEnv(getenv func(string) string) (Options, error) {
 	if v := getenv(envShare); v != "" && v != "0" && !strings.EqualFold(v, "false") {
 		o.AllowShare = true
 	}
-	o.Account = strings.TrimSpace(getenv(envAccount))
+	o.Organization = strings.TrimSpace(getenv(envOrg))
 	return o, nil
 }
 
@@ -883,8 +883,8 @@ func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, b
 	if err != nil {
 		return nil, err
 	}
-	if opts.Account != "" {
-		if _, err := checkAccount(ctx, opts, bin); err != nil {
+	if opts.Organization != "" {
+		if _, err := checkOrganization(ctx, opts, bin); err != nil {
 			return nil, err
 		}
 	}
@@ -1014,10 +1014,10 @@ type Health struct {
 	// a bare token may not).
 	Email        string `json:"email,omitempty"`
 	Organization string `json:"organization,omitempty"`
-	// ExpectedAccount is ARTIFACT_HELPER_ACCOUNT, when set; the login must match it.
-	ExpectedAccount string `json:"expectedAccount,omitempty"`
-	Model           string `json:"model"`
-	Timeout         string `json:"timeout"`
+	// ExpectedOrganization is ARTIFACT_HELPER_ORGANIZATION, when set; the login must belong to it.
+	ExpectedOrganization string `json:"expectedOrganization,omitempty"`
+	Model                string `json:"model"`
+	Timeout              string `json:"timeout"`
 }
 
 // Account says who is signed in, in a few words, or "" when claude did not say.
@@ -1041,11 +1041,11 @@ type account struct {
 	Organization string
 }
 
-// Matches reports whether the login is the account named by want: its email or organization name, compared
-// without regard to case.
-func (a account) Matches(want string) bool {
+// InOrganization reports whether the login belongs to the organization named by want, compared without
+// regard to case.
+func (a account) InOrganization(want string) bool {
 	want = strings.TrimSpace(want)
-	return want != "" && (strings.EqualFold(a.Email, want) || strings.EqualFold(a.Organization, want))
+	return want != "" && strings.EqualFold(a.Organization, want)
 }
 
 func (a account) String() string {
@@ -1091,36 +1091,36 @@ func readAuthStatus(ctx context.Context, opts Options, bin string) (account, err
 	return a, nil
 }
 
-// checkAccount refuses unless claude is signed in as opts.Account.
-func checkAccount(ctx context.Context, opts Options, bin string) (account, error) {
+// checkOrganization refuses unless claude is signed in to opts.Organization.
+func checkOrganization(ctx context.Context, opts Options, bin string) (account, error) {
 	a, err := readAuthStatus(ctx, opts, bin)
 	if err != nil {
 		return a, err
 	}
 	if !a.LoggedIn {
-		return a, &Refusal{Code: "not-logged-in", Message: "claude is not signed in; " + envAccount + " expects " + opts.Account, Fix: loginFix}
+		return a, &Refusal{Code: "not-logged-in", Message: "claude is not signed in; " + envOrg + " expects " + opts.Organization, Fix: loginFix}
 	}
-	if a.Email == "" && a.Organization == "" {
-		return a, &Refusal{Code: "account-unverifiable",
-			Message: fmt.Sprintf("%s expects %s, but this login (%s) names no email or organization, so it cannot be checked", envAccount, opts.Account, a.AuthMethod),
-			Fix:     "sign in with `claude auth login` so claude reports the account, or unset " + envAccount}
+	if a.Organization == "" {
+		return a, &Refusal{Code: "organization-unverifiable",
+			Message: fmt.Sprintf("%s expects %s, but this login (%s) names no organization, so it cannot be checked", envOrg, opts.Organization, a.AuthMethod),
+			Fix:     "sign in with `claude auth login` so claude reports the organization, or unset " + envOrg}
 	}
-	if !a.Matches(opts.Account) {
-		return a, &Refusal{Code: "wrong-account",
-			Message: fmt.Sprintf("claude is signed in as %s, but %s expects %s; nothing was run", a, envAccount, opts.Account),
-			Fix:     "run `claude auth login` with the " + opts.Account + " account, or set " + envAccount + " to the account you mean"}
+	if !a.InOrganization(opts.Organization) {
+		return a, &Refusal{Code: "wrong-organization",
+			Message: fmt.Sprintf("claude is signed in as %s, but %s expects %s; nothing was run", a, envOrg, opts.Organization),
+			Fix:     "run `claude auth login` with an account in " + opts.Organization + ", or set " + envOrg + " to the organization you mean"}
 	}
 	return a, nil
 }
 
-// Doctor checks that the claude binary is present and signed in, as the expected account when one is set.
+// Doctor checks that the claude binary is present and signed in, to the expected organization when one is set.
 // A failed check is a Refusal; the Health comes back with it when the binary ran.
 func Doctor(ctx context.Context, opts Options) (*Health, error) {
 	bin, err := opts.Binary()
 	if err != nil {
 		return nil, err
 	}
-	h := &Health{Claude: bin, Model: opts.model(), Timeout: opts.timeout().String(), ExpectedAccount: opts.Account}
+	h := &Health{Claude: bin, Model: opts.model(), Timeout: opts.timeout().String(), ExpectedOrganization: opts.Organization}
 	{
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -1143,8 +1143,8 @@ func Doctor(ctx context.Context, opts Options) (*Health, error) {
 	if !h.LoggedIn {
 		return h, &Refusal{Code: "not-logged-in", Message: "claude is not signed in", Fix: loginFix}
 	}
-	if opts.Account != "" {
-		if _, err := checkAccount(ctx, opts, bin); err != nil {
+	if opts.Organization != "" {
+		if _, err := checkOrganization(ctx, opts, bin); err != nil {
 			return h, err
 		}
 	}

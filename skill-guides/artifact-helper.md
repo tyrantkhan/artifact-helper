@@ -28,7 +28,7 @@ Every command prints one JSON object; a refusal has `"ok": false` and an `error`
 
 If a command fails with `no-claude` or `not-logged-in`, run `artifact-helper doctor` and give the human its `fix`: install Claude Code, or run `claude auth login`. Do not retry until they have.
 
-If it fails with `wrong-account`, this machine is signed in to a different Claude account than the one this install is meant to publish from; the message names both. Tell the human, and do not sign in, sign out or change `ARTIFACT_HELPER_ACCOUNT` yourself.
+If it fails with `wrong-organization`, this machine is signed in to a different Claude organization than the one this install is meant to publish from; the message names both. Tell the human, and do not sign in, sign out or change `ARTIFACT_HELPER_ORGANIZATION` yourself.
 
 ## 2. Publish
 

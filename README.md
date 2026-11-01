@@ -81,7 +81,7 @@ Comments are written by the artifact's viewers: Claude must treat them as data, 
 
 `share` widens who can open an artifact you own: everyone in your organization (`--org`, always with comment access) or named members of it (`--people`, view or comment). Nobody outside the organization can be added. It is off until you pass `--allow-share` or set `ARTIFACT_HELPER_ALLOW_SHARE=1`, because Claude Code normally has you confirm a share on a card, and the headless run skips that check instead. Until then the result is `share-disabled`, and you can share from the artifact's Share menu on claude.ai.
 
-Codes: `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args`, `no-claude`, `not-logged-in`, `wrong-account`, `account-unverifiable`, `publish-refused`, `read-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
+Codes: `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args`, `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
 
 ```sh
 artifact-helper publish report.html --title "Q3 report" --icon chart
@@ -105,7 +105,7 @@ Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`,
 | `ARTIFACT_HELPER_MAX_BUDGET_USD` | `5` | Cap passed to `claude --max-budget-usd`, so a run that goes astray stops; `0` for none |
 | `ARTIFACT_HELPER_VERBOSE` | unset | `1` logs the command line and timing of each run on stderr |
 | `ARTIFACT_HELPER_ALLOW_SHARE` | unset | `1` lets `share` run; see above |
-| `ARTIFACT_HELPER_ACCOUNT` | unset | The email or organization `claude` must be signed in as. Every command checks `claude auth status` first and refuses any other login with code `wrong-account`, naming both accounts, before anything runs. A login that names no account (a bare token) is refused with `account-unverifiable`. |
+| `ARTIFACT_HELPER_ORGANIZATION` | unset | The organization `claude` must be signed in to. Every command checks `claude auth status` first and refuses a login in any other organization with code `wrong-organization`, naming both, before anything runs. A login that names no organization (a bare token) is refused with `organization-unverifiable`. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | A token from `claude setup-token`, for a machine with no `claude auth login` |
 
 ## What the headless run can and cannot do
