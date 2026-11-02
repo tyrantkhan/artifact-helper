@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/tyrantkhan/artifact-helper/compare/v0.2.1...v0.3.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* harden the gates, the runs and the release pipeline ([#21](https://github.com/tyrantkhan/artifact-helper/issues/21))
+
+### Bug Fixes
+
+* harden the gates, the runs and the release pipeline ([#21](https://github.com/tyrantkhan/artifact-helper/issues/21)) ([8d6bd6e](https://github.com/tyrantkhan/artifact-helper/commit/8d6bd6e65c31f701a9c77309e268bdcd534817a0))
+
 ## [0.2.1](https://github.com/tyrantkhan/artifact-helper/compare/v0.2.0...v0.2.1) (2026-11-02)
 
 

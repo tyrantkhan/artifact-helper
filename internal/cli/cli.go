@@ -21,7 +21,7 @@ import (
 )
 
 // Version is this build's version. release-please bumps it; release builds also set it with -ldflags.
-var Version = "0.2.1" // x-release-please-version
+var Version = "0.3.0" // x-release-please-version
 
 // Env is what the command line reads and writes, injected so tests can drive it.
 type Env struct {

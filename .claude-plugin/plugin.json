@@ -1,6 +1,6 @@
 {
   "name": "artifact-helper",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Publish, edit, share and answer comments on claude.ai artifacts from Claude Code, through the Claude subscription already signed in on the machine.",
   "author": {
     "name": "tyrantkhan",
