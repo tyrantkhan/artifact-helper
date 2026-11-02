@@ -26,32 +26,40 @@
       "section": "Bug Fixes"
     },
     {
-      "type": "refactor",
-      "section": "Refactoring"
-    },
-    {
       "type": "perf",
       "section": "Performance"
     },
     {
-      "type": "chore",
-      "section": "Miscellaneous",
-      "hidden": true
+      "type": "refactor",
+      "section": "Refactoring"
+    },
+    {
+      "type": "revert",
+      "section": "Reverts"
     },
     {
       "type": "docs",
-      "section": "Documentation",
-      "hidden": true
+      "section": "Documentation"
+    },
+    {
+      "type": "build",
+      "section": "Build"
     },
     {
       "type": "ci",
-      "section": "CI",
-      "hidden": true
+      "section": "CI"
     },
     {
       "type": "test",
-      "section": "Tests",
-      "hidden": true
+      "section": "Tests"
+    },
+    {
+      "type": "style",
+      "section": "Style"
+    },
+    {
+      "type": "chore",
+      "section": "Miscellaneous"
     }
   ]
 }
