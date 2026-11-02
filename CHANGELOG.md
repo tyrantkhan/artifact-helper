@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.6...v0.2.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* every artifact command refuses with not-initialized until artifact-helper init has saved its setup.
+
+### Features
+
+* add init and require it before any artifact command ([#18](https://github.com/tyrantkhan/artifact-helper/issues/18)) ([7c04cba](https://github.com/tyrantkhan/artifact-helper/commit/7c04cba1e42d20fa66a84486fe3ae057dfcae0ad))
+
 ## [0.1.6](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.5...v0.1.6) (2026-11-02)
 
 
