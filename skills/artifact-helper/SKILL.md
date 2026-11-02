@@ -20,7 +20,7 @@ on this machine, so the command details never drift from the version you run.
 artifact-helper get-skill
 ```
 
-Every `artifact-helper` command prints one JSON object. Use `artifact-helper help <command>` for
+Every `artifact-helper` command but `get-skill` prints one JSON object. Use `artifact-helper help <command>` for
 anything the guide does not cover; do not guess flags. If `artifact-helper` cannot run, say so,
 and do not invent another way to publish. If `get-skill` is unknown, the installed binary is
 older than this stub: updating it restores the guide.

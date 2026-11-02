@@ -57,9 +57,9 @@ echo "Installed ${NAME} ${VERSION} to ${INSTALL_DIR}/${NAME}"
 
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
-        echo "Run '${NAME} doctor' to check your Claude login."
+        echo "Run '${NAME} init' to choose the Claude account it publishes as."
         ;;
     *)
-        echo "Add ${INSTALL_DIR} to your PATH, then run '${NAME} doctor' to check your Claude login."
+        echo "Add ${INSTALL_DIR} to your PATH, then run '${NAME} init' to choose the Claude account it publishes as."
         ;;
 esac
