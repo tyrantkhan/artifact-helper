@@ -136,6 +136,12 @@ func TestThePublishedFileKeepsItsLink(t *testing.T) {
 	if prompt := lastPrompt(t, record); r["forwardedFrom"] != firstLink || !strings.Contains(prompt, `"url":"`+secondLink+`"`) || !strings.Contains(prompt, `"`+v3+`"`) {
 		t.Fatalf("result = %v, prompt = %s", r, prompt)
 	}
+	// So does edit, given the old link and that file.
+	m.answer(t, record, map[string]string{"publish": publishedAs(secondLink, "1793900000-abce", true)})
+	code, out, _ := m.run(`[{"old_str":"Draft","new_str":"Final"}]`, "edit", firstLink, "--file", p)
+	if code != 0 || result(t, out)["forwardedFrom"] != firstLink || !strings.Contains(lastPrompt(t, record), `"url":"`+secondLink+`"`) {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
 	// Any other file given the old link updates the old artifact, which is still live.
 	r = m.publish(t, record, firstLink, "1793900001-abcd", page(t), "--url", firstLink+"/")
 	if prompt := lastPrompt(t, record); r["forwardedFrom"] != nil || !strings.Contains(prompt, `"url":"`+firstLink+`/"`) || !strings.Contains(prompt, `"`+v2+`"`) {
@@ -296,6 +302,45 @@ func TestAPublishThatWentThroughIsReported(t *testing.T) {
 	}
 }
 
+func TestTheOrganizationIsRecorded(t *testing.T) {
+	m, record := tracking(t)
+	if err := saveConfig(m.config, config{Organization: "Example Inc", OrganizationID: "org-1", ClaudeConfigDir: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	p := page(t)
+	m.bin = fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Record: record,
+		Auth:    `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc", "orgId": "org-1"}`,
+		Outputs: map[string]string{"publish": publishedAs(firstLink, v1, false)}})
+	if code, out, _ := m.run("", "publish", p); code != 0 {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	if e := m.record(t).byFile(p); e.OrganizationID != "org-1" {
+		t.Fatalf("record = %+v", e)
+	}
+}
+
+func TestEveryCommandPassesARefusalOn(t *testing.T) {
+	m, record := tracking(t)
+	p := page(t)
+	m.publish(t, record, firstLink, v1, p)
+	m.bin = fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: exampleLogin, Outputs: map[string]string{"": ""}, Code: 1})
+	for _, args := range [][]string{{"list"}, {"read", firstLink, "--list"}, {"comments", firstLink}, {"edit", p}} {
+		if code, out, _ := m.run(`[{"old_str":"Draft","new_str":"Final"}]`, args...); code != 1 || refusalCode(t, out) != "claude-failed" {
+			t.Fatalf("%v: code=%d out=%s", args, code, out)
+		}
+	}
+	// The failed edit put the file back.
+	if b, err := os.ReadFile(p); err != nil || !strings.Contains(string(b), "Draft") {
+		t.Fatalf("page = %s, %v", b, err)
+	}
+}
+
+func TestAnUnknownVersionIsNeverNewer(t *testing.T) {
+	if newerThan("2026-11-03T00:00:00Z", "") || newerThan("2026-11-03T00:00:00Z", "draft") || newerThan("yesterday", v1) || !newerThan("2026-11-03T00:00:00Z", v1) {
+		t.Fatal("newerThan")
+	}
+}
+
 func TestTheNewestVersionSeenIsKept(t *testing.T) {
 	var e tracked
 	for _, v := range []string{v2, v1, "", v3, v2} {
@@ -316,7 +361,25 @@ func TestTheRecordIsSavedWholeOrRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "published.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, _ := m.run("", "publish", page(t)); code != 1 || refusalCode(t, out) != "invalid-record" {
+	for _, args := range [][]string{{"publish", page(t)}, {"edit", firstLink}, {"updates"}} {
+		if code, out, _ := m.run(`[{"old_str":"a","new_str":"b"}]`, args...); code != 1 || refusalCode(t, out) != "invalid-record" {
+			t.Fatalf("%v: code=%d out=%s", args, code, out)
+		}
+	}
+	// read needs no record to run, so it reads, and reports the record it could not save.
+	m.answer(t, record, map[string]string{"read": readAs(v3)})
+	code, out, _ := m.run("", "read", firstLink, "--out", t.TempDir())
+	if e, _ := result(t, out)["recordError"].(string); code != 0 || !strings.Contains(e, "not valid JSON") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// A record that cannot be read at all refuses as well.
+	if err := os.Remove(filepath.Join(dir, "published.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "published.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, _ := m.run("", "publish", page(t)); code != 1 || refusalCode(t, out) != "error" {
 		t.Fatalf("code=%d out=%s", code, out)
 	}
 }
@@ -388,6 +451,13 @@ func TestUpdatesReportsThisSessionsArtifacts(t *testing.T) {
 	if a := result(t, out)["artifacts"].([]any)[0].(map[string]any); code != 0 || len(a["newComments"].([]any)) != 0 {
 		t.Fatalf("code=%d out=%s", code, out)
 	}
+	// A run that could not list refuses, and saves nothing.
+	m.answer(t, record, map[string]string{"updates": fakeclaude.Calls(`{"type":"result","subtype":"success","result":"done"}`,
+		fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list"}`, Data: "null", Text: "no", IsError: true})})
+	if code, out, _ := m.run("", "updates"); code != 1 || refusalCode(t, out) != "updates-refused" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	m.answer(t, record, map[string]string{"updates": stream})
 	// --all covers every artifact this machine published, and none it only read.
 	m.run("", "updates", "--all")
 	if prompt := lastPrompt(t, record); !strings.Contains(prompt, secondLink) || strings.Contains(prompt, readLink) {

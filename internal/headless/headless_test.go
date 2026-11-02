@@ -1453,4 +1453,66 @@ func TestUpdatesReadsEverythingFromTheToolsData(t *testing.T) {
 	bin, _ = fakeClaude(t, map[string]string{"updates": done}, 0, nil)
 	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
 	wantRefusal(t, err, "bad-output")
+	bin, _ = fakeClaude(t, map[string]string{"updates": ""}, 1, nil)
+	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
+	wantRefusal(t, err, "claude-failed")
+	// Comments the run skipped, or data the tool sent in another shape, leave that artifact with no threads. An
+	// author the names map lacks keeps the account id.
+	odd := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + other + `"}`, Data: `"unexpected"`, Text: "?"}
+	unnamed := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + link + `"}`, Text: "1 thread",
+		Data: `{"threads":[{"id":"t1","comments":[{"id":"c1","account":"acct-9","text":"Hi"}]}]}`}
+	third := "https://claude.ai/artifact/Third3"
+	bin, _ = fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, list, unnamed, odd)}, 0, nil)
+	res, err = Updates(ctx, Options{Claude: bin}, []string{link, other, third})
+	if err != nil || res.Artifacts[0].Threads[0].Comments[0].Author != "acct-9" || len(res.Artifacts[1].Threads) != 0 ||
+		res.Artifacts[2].Error != "the run did not read this artifact's comments" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestCommentsWithoutAnAnswerRefuse(t *testing.T) {
+	bin, _ := fakeClaude(t, map[string]string{"comments": fakeclaude.Calls(`{"type":"result","subtype":"success","result":"x"}`,
+		fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments"}`, Data: `{}`, Text: "No threads."})}, 0, nil)
+	_, err := Comments(context.Background(), Options{Claude: bin}, link, "", "")
+	wantRefusal(t, err, "bad-output")
+}
+
+func TestPublishTrustsTheToolsOwnData(t *testing.T) {
+	ctx := context.Background()
+	const expected = "1793629160-0a57"
+	answer := `{"type":"result","subtype":"success","structured_output":{"url":"` + link + `","error":""}}`
+	read := func(data string) fakeclaude.Call {
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read"}`, Data: data, Text: "read"}
+	}
+	publish := func(data string) fakeclaude.Call {
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`, Data: data, Text: "Published"}
+	}
+	done := `{"url":"` + link + `","updated":true,"version":"1793700000-c0de"}`
+	req := Request{Path: page(t, "p.html"), URL: link, ExpectVersion: expected}
+
+	// The run published over a version it should have stopped at: the result says which.
+	bin, _ := fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, read(`{"artifactRead":{"ver":"1793650000-aaaa"}}`), publish(done))}, 0, nil)
+	res, err := Publish(ctx, Options{Claude: bin}, req)
+	if err != nil || res.Overwrote != "1793650000-aaaa" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// A read whose data is in another shape names no version, so nothing is said to be overwritten.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, read(`"unexpected"`), publish(done))}, 0, nil)
+	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.Overwrote != "" || res.Version != "1793700000-c0de" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Publish data with no link leaves the run's answer to decide.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, publish(`{}`))}, 0, nil)
+	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.URL != link || res.Version != "" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// A failed run whose publish the tool refused reports the refusal, not the failure.
+	failed := `{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"over budget"}`
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(failed, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`,
+		Data: "null", Text: "no such artifact", IsError: true})}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, req)
+	wantRefusal(t, err, "publish-refused")
+	if !LooksLikeLink(link) || LooksLikeLink("page.html") {
+		t.Fatal("LooksLikeLink")
+	}
 }
