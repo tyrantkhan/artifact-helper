@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/tyrantkhan/artifact-helper/compare/v0.2.0...v0.2.1) (2026-11-02)
+
+
+### Tests
+
+* keep the read test's fake page out of the source tree ([60952d5](https://github.com/tyrantkhan/artifact-helper/commit/60952d507fe5c676e86f2cc5fddb65ff4ef6c737))
+
 ## [0.2.0](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.6...v0.2.0) (2026-11-02)
 
 
