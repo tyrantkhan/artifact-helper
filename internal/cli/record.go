@@ -58,6 +58,10 @@ func loadRecord(env *Env) (*published, error) {
 	if err != nil {
 		return nil, err
 	}
+	return readRecord(path)
+}
+
+func readRecord(path string) (*published, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return &published{}, nil
@@ -77,15 +81,15 @@ func loadRecord(env *Env) (*published, error) {
 // as little as one save can. Each save writes a file of its own and renames it into place, so the record is
 // never left half written.
 func changeRecord(env *Env, change func(*published)) error {
-	p, err := loadRecord(env)
-	if err != nil {
-		return err
-	}
-	change(p)
 	path, err := recordPath(env)
 	if err != nil {
 		return err
 	}
+	p, err := readRecord(path)
+	if err != nil {
+		return err
+	}
+	change(p)
 	// Strings, maps and slices of them always encode.
 	data, _ := json.MarshalIndent(p, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -103,9 +107,8 @@ func changeRecord(env *Env, change func(*published)) error {
 		werr = os.Rename(tmp.Name(), path)
 	}
 	if werr != nil {
-		if rerr := os.Remove(tmp.Name()); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-			werr = errors.Join(werr, rerr)
-		}
+		// Only published.json is ever read, so a temporary file that cannot be removed does no harm.
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("saving %s: %w", path, werr)
 	}
 	return nil

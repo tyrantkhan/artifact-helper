@@ -401,6 +401,75 @@ func TestARecordThatCannotBeSavedDoesNotHideThePublish(t *testing.T) {
 	}
 }
 
+func TestTheRecordNeedsAConfigFolder(t *testing.T) {
+	// No config path is injected, and without a home the system has no config folder to offer.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("AppData", "")
+	if _, err := loadRecord(&Env{}); err == nil || !strings.Contains(err.Error(), "user config folder") {
+		t.Fatalf("load: %v", err)
+	}
+	if err := changeRecord(&Env{}, func(*published) {}); err == nil || !strings.Contains(err.Error(), "user config folder") {
+		t.Fatalf("change: %v", err)
+	}
+}
+
+func TestAFailedSaveLeavesNothingBehind(t *testing.T) {
+	env := &Env{Config: filepath.Join(t.TempDir(), "config.json")}
+	path, err := recordPath(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A folder that takes the record's place while the save is under way stops the rename.
+	err = changeRecord(env, func(*published) {
+		if err := os.MkdirAll(filepath.Join(path, "taken"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err == nil || !strings.Contains(err.Error(), "saving "+path) {
+		t.Fatalf("err = %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "published-*")); len(left) != 0 {
+		t.Fatalf("left behind: %v", left)
+	}
+}
+
+func TestARecordWithNoFolderToSaveInRefuses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not stop writes into a read-only folder")
+	}
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	env := &Env{Config: filepath.Join(locked, "artifact-helper", "config.json")}
+	if err := changeRecord(env, func(*published) {}); err == nil || !strings.Contains(err.Error(), "creating ") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestARelativePathNeedsAWorkingFolder(t *testing.T) {
+	m, _ := tracking(t)
+	gone := t.TempDir()
+	t.Chdir(gone)
+	if err := os.Remove(gone); err != nil {
+		t.Skipf("the working folder cannot be removed here: %v", err)
+	}
+	// macOS still names a removed working folder; Linux reports it gone.
+	if _, err := os.Getwd(); err == nil {
+		t.Skip("this system still finds a working folder that was removed")
+	}
+	if got := canonical("page.html"); got != "page.html" {
+		t.Fatalf("canonical = %q", got)
+	}
+	for _, args := range [][]string{{"publish", "page.html"}, {"edit", "page.html"}} {
+		if code, out, _ := m.run("[]", args...); code != 1 || !strings.Contains(out, "resolving page.html") {
+			t.Fatalf("%v: code=%d out=%s", args, code, out)
+		}
+	}
+}
+
 func TestUpdatesReportsThisSessionsArtifacts(t *testing.T) {
 	m, record := tracking(t)
 	if err := changeRecord(&Env{Config: m.config}, func(p *published) {
