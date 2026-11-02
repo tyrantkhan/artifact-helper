@@ -467,6 +467,11 @@ func TestInitRefusals(t *testing.T) {
 	if code, out, _ := m.run("", "init", "extra"); code != 1 || refusalCode(t, out) != "invalid-args" {
 		t.Fatalf("code=%d out=%s", code, out)
 	}
+	m.getenv["ARTIFACT_HELPER_TIMEOUT"] = "soon"
+	if code, out, _ := m.run("", "init"); code != 1 || refusalCode(t, out) != "invalid-env" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	delete(m.getenv, "ARTIFACT_HELPER_TIMEOUT")
 	if code, out, _ := m.run("", "publish", "--", "--help"); code != 1 || refusalCode(t, out) != "not-initialized" {
 		t.Fatalf("-- did not end the flags: code=%d out=%s", code, out)
 	}

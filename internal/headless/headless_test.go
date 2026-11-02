@@ -756,10 +756,14 @@ func TestInheritedConfigDir(t *testing.T) {
 	if got := InheritedConfigDir([]string{"HOME=/h", "NOT_A_PAIR"}); got != "" {
 		t.Fatalf("inherited %q from an environment without it", got)
 	}
-	// With no environment given, it is this process's.
+	// With no environment given, it is this process's, which a chosen folder still overrides.
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 	if got := (Options{}).claudeConfigDir(); got != dir {
 		t.Fatalf("config dir %q", got)
+	}
+	env := (Options{ConfigDir: ConfigDirDefault}).childEnv()
+	if len(env) == 0 || InheritedConfigDir(env) != "" {
+		t.Fatalf("default kept CLAUDE_CONFIG_DIR from this process: %d entries", len(env))
 	}
 }
 
