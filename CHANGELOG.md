@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.6](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.5...v0.1.6) (2026-11-02)
+
+
+### Documentation
+
+* cover list limits, refusals, and the edit and file rules in the guide ([#15](https://github.com/tyrantkhan/artifact-helper/issues/15)) ([14f720a](https://github.com/tyrantkhan/artifact-helper/commit/14f720aa56ba8f0a24c69484fe9ccbd5c0380097))
+
+
+### Build
+
+* run a dev build with mise run dev instead of installing it ([#14](https://github.com/tyrantkhan/artifact-helper/issues/14)) ([0bb9e9f](https://github.com/tyrantkhan/artifact-helper/commit/0bb9e9fde4d66d1c7ebba98d68112510ec4eb5c5))
+
+
+### CI
+
+* cut a release for every merge to main ([#16](https://github.com/tyrantkhan/artifact-helper/issues/16)) ([455634d](https://github.com/tyrantkhan/artifact-helper/commit/455634d1dad01ad081d5687f5be77c33a2a21cb2))
+
 ## [0.1.5](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.4...v0.1.5) (2026-11-02)
 
 
