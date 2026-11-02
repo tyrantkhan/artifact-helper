@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.2...v0.1.3) (2026-11-02)
+
+
+### CI
+
+* publish releases only once GoReleaser has uploaded ([#5](https://github.com/tyrantkhan/artifact-helper/issues/5)) ([61f3cc9](https://github.com/tyrantkhan/artifact-helper/commit/61f3cc9a46865a29661ddc0676ab4d2428e82b15))
+
 ## [0.1.2](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.1...v0.1.2) (2026-11-02)
 
 
