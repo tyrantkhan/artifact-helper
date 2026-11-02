@@ -256,8 +256,13 @@ func Runs(t testing.TB, record string) [][]string {
 // result (JSON, "null" for none), and text, what the model was shown, marked as an error when isError. The
 // run then ended with result, its final result line.
 func ToolRun(tool, data, text string, isError bool, result string) string {
+	return ToolCall(tool, `{}`, data, text, isError, result)
+}
+
+// ToolCall is ToolRun with the call's input, such as {"action":"publish"}.
+func ToolCall(tool, input, data, text string, isError bool, result string) string {
 	use, err := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
-		map[string]any{"type": "tool_use", "id": "toolu_1", "name": tool, "input": map[string]any{}},
+		map[string]any{"type": "tool_use", "id": "toolu_1", "name": tool, "input": json.RawMessage(input)},
 	}}})
 	if err != nil {
 		panic(err)

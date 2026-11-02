@@ -188,10 +188,13 @@ func TestPublishRefusals(t *testing.T) {
 		// A link in prose is never taken: the reply may name it while it explains a failure.
 		{name: "link in plain reply", stdout: `{"type":"result","subtype":"success","result":"The publish to https://claude.ai/artifact/Zz9 was refused"}`, want: "bad-output"},
 		// The tool's own result decides, whatever the structured answer says.
-		{name: "tool result", stdout: fakeclaude.ToolRun("Artifact", `{"url":"https://claude.ai/artifact/Zz9","updated":false}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":"x"}}`), want: ""},
-		{name: "tool refused, reply names the link", stdout: fakeclaude.ToolRun("Artifact", `{}`, "The file is too large", true, `{"type":"result","subtype":"success","structured_output":{"url":"https://claude.ai/artifact/Zz9","error":""}}`), want: "publish-refused"},
-		{name: "update made a new artifact", req: Request{URL: link}, stdout: fakeclaude.ToolRun("Artifact", `{"url":"https://claude.ai/artifact/Zz9","updated":false}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"https://claude.ai/artifact/Zz9","error":""}}`), want: "publish-refused"},
-		{name: "update", req: Request{URL: link}, stdout: fakeclaude.ToolRun("Artifact", `{"url":"https://claude.ai/artifact/Zz9","updated":true}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":""}}`), want: ""},
+		{name: "tool result", stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{"url":"https://claude.ai/artifact/Zz9","updated":false}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":"x"}}`), want: ""},
+		{name: "tool refused, reply names the link", stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{}`, "The file is too large", true, `{"type":"result","subtype":"success","structured_output":{"url":"https://claude.ai/artifact/Zz9","error":""}}`), want: "publish-refused"},
+		{name: "update made a new artifact", req: Request{URL: link}, stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{"url":"https://claude.ai/artifact/Zz9","updated":false}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"https://claude.ai/artifact/Zz9","error":""}}`), want: "publish-refused"},
+		// An update reads the artifact first; a run that stopped after the read published nothing, whatever the
+		// read's own data holds.
+		{name: "stopped after the read", req: Request{URL: link}, stdout: fakeclaude.ToolCall("Artifact", `{"action":"read"}`, `{"url":"https://claude.ai/artifact/Zz9","title":"Q3"}`, "<html>", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":"I stopped before publishing"}}`), want: "publish-refused"},
+		{name: "update", req: Request{URL: link}, stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{"url":"https://claude.ai/artifact/Zz9","updated":true}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":""}}`), want: ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1151,13 +1154,17 @@ func TestContentText(t *testing.T) {
 
 func TestLoginTroubleIsWholePhrases(t *testing.T) {
 	for text, want := range map[string]bool{
-		"Not logged in. Run claude auth login.":          true,
-		"Authentication error · please log in":           true,
-		"Invalid API key · Please run /login":            true,
-		"OAuth token has expired":                        true,
-		"Reached max turns while reading the login form": false,
-		"error after 4013 bytes":                         false,
-		"updated the catalog index":                      false,
+		"Not logged in. Run claude auth login.":                true,
+		"Authentication error · please log in":                 true,
+		"Invalid API key · Please run /login":                  true,
+		"OAuth token has expired":                              true,
+		"Authentication required · Sign in again to continue.": true,
+		"OAuth access token is invalid":                        true,
+		"OAuth access token has been revoked":                  true,
+		"Login expired · Please run /login":                    true,
+		"Reached max turns while reading the login form":       false,
+		"error after 4013 bytes":                               false,
+		"updated the catalog index":                            false,
 	} {
 		if got := loginTrouble.MatchString(text); got != want {
 			t.Errorf("%q: %v, want %v", text, got, want)

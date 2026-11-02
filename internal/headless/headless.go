@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -385,8 +386,9 @@ func Publish(ctx context.Context, opts Options, req Request) (*Result, error) {
 		return nil, err
 	}
 	// The Artifact tool's own result is the authority. The model's reply can name the link while it explains
-	// a failure, so a link is never taken from prose.
-	if c, ok := lastArtifactCall(cr); ok {
+	// a failure, so a link is never taken from prose. Only the publish call counts: an update reads the
+	// artifact first, and that read is no publish.
+	if c, ok := lastArtifactCall(cr, "publish"); ok {
 		if c.IsError {
 			return nil, refused("publish", c.Text, cr.Result)
 		}
@@ -1221,7 +1223,9 @@ type claudeResult struct {
 
 // toolCall is one tool call of a run: the tool's own structured result, and the text the model was shown.
 type toolCall struct {
-	Name    string
+	Name string
+	// Action is the call's action argument, such as publish or read, when it has one.
+	Action  string
 	Data    json.RawMessage
 	Text    string
 	IsError bool
@@ -1305,7 +1309,8 @@ func withArtifactTool(env []string) []string {
 // loginTrouble matches what claude prints when it cannot authenticate. Each alternative is a whole phrase, so a
 // run that only mentions a login form, or a number with 401 in it, is not taken for one.
 var loginTrouble = regexp.MustCompile(`(?i)\bnot logged in\b|\bplease (run /login|log in)\b|\binvalid api key\b|` +
-	`\bauthentication[ _]error\b|\boauth token (has )?(expired|been revoked)\b|\b401 unauthorized\b`)
+	`\bauthentication[ _](error|required)\b|\bsign in again\b|\blogin expired\b|` +
+	`\boauth (access )?token (has )?(expired|been revoked|is invalid)\b|\b401 unauthorized\b`)
 
 // parseOutput turns the run's stdout, stderr and exit status into a result object or a Refusal.
 func parseOutput(stdout []byte, stderr string, runErr error) (*claudeResult, error) {
@@ -1386,19 +1391,22 @@ func refused(what, toolMsg, reply string) error {
 // streamTools reads the tool calls out of a stream-json transcript: an assistant event's tool_use names a
 // call, and the user event that answers it carries the result as text and, in tool_use_result, as data.
 func streamTools(stream []byte) []toolCall {
-	names := map[string]string{}
+	names, actions := map[string]string{}, map[string]string{}
 	var calls []toolCall
 	for _, line := range bytes.Split(stream, []byte("\n")) {
 		var ev struct {
 			Type    string `json:"type"`
 			Message struct {
 				Content []struct {
-					Type      string          `json:"type"`
-					ID        string          `json:"id"`
-					Name      string          `json:"name"`
-					ToolUseID string          `json:"tool_use_id"`
-					IsError   bool            `json:"is_error"`
-					Content   json.RawMessage `json:"content"`
+					Type      string `json:"type"`
+					ID        string `json:"id"`
+					Name      string `json:"name"`
+					ToolUseID string `json:"tool_use_id"`
+					Input     struct {
+						Action string `json:"action"`
+					} `json:"input"`
+					IsError bool            `json:"is_error"`
+					Content json.RawMessage `json:"content"`
 				} `json:"content"`
 			} `json:"message"`
 			ToolUseResult json.RawMessage `json:"tool_use_result"`
@@ -1410,9 +1418,10 @@ func streamTools(stream []byte) []toolCall {
 		for _, c := range ev.Message.Content {
 			switch {
 			case ev.Type == "assistant" && c.Type == "tool_use":
-				names[c.ID] = c.Name
+				names[c.ID], actions[c.ID] = c.Name, c.Input.Action
 			case ev.Type == "user" && c.Type == "tool_result":
-				calls = append(calls, toolCall{Name: names[c.ToolUseID], Data: ev.ToolUseResult, Text: contentText(c.Content), IsError: c.IsError})
+				calls = append(calls, toolCall{Name: names[c.ToolUseID], Action: actions[c.ToolUseID], Data: ev.ToolUseResult,
+					Text: contentText(c.Content), IsError: c.IsError})
 			}
 		}
 	}
@@ -1438,10 +1447,11 @@ func contentText(raw json.RawMessage) string {
 	return b.String()
 }
 
-// lastArtifactCall is the run's last Artifact call, if it made one.
-func lastArtifactCall(cr *claudeResult) (toolCall, bool) {
+// lastArtifactCall is the run's last Artifact call with one of actions, or with any action when none are
+// named, if it made one.
+func lastArtifactCall(cr *claudeResult, actions ...string) (toolCall, bool) {
 	for i := len(cr.tools) - 1; i >= 0; i-- {
-		if c := cr.tools[i]; c.Name == "Artifact" {
+		if c := cr.tools[i]; c.Name == "Artifact" && (len(actions) == 0 || slices.Contains(actions, c.Action)) {
 			return c, true
 		}
 	}
