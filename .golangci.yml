@@ -1,0 +1,31 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  default: none
+  enable:
+    - govet
+    - gocritic
+    - unused
+    - ineffassign
+    - bodyclose
+    - nilerr
+    - errcheck
+    - staticcheck
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck

@@ -1,0 +1,56 @@
+commit-msg:
+  commands:
+    validate:
+      run: |
+        msg=$(head -1 {1})
+        if ! echo "$msg" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?(!)?: .+'; then
+          echo "ERROR: Commit message does not follow Conventional Commits format."
+          echo ""
+          echo "  Valid prefixes: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+          echo "  Format: <type>[optional scope][!]: <description>"
+          echo "  Examples:"
+          echo "    feat: add OAuth support"
+          echo "    fix(auth): handle expired tokens"
+          echo "    docs: update README"
+          exit 1
+        fi
+
+pre-commit:
+  parallel: true
+  commands:
+    branch-name:
+      run: |
+        branch=$(git branch --show-current)
+        if [ -z "$branch" ]; then
+          exit 0
+        fi
+        if echo "$branch" | grep -qE '^(main|master|develop)$'; then
+          exit 0
+        fi
+        if ! echo "$branch" | grep -qE '^(main|master|develop|feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|hotfix|release)/[0-9]+-[a-z0-9._-]+$'; then
+          echo "ERROR: Branch name '$branch' does not follow naming convention."
+          echo ""
+          echo "  Allowed standalone: main, master, develop"
+          echo "  Format: <type>/<issue>-<description>"
+          echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert, hotfix, release"
+          echo "  Description must be lowercase alphanumeric with dots, hyphens, or underscores."
+          echo "  Examples:"
+          echo "    feat/1-add-oauth"
+          echo "    fix/12-login-bug"
+          echo "    chore/5-update-deps"
+          exit 1
+        fi
+    lint:
+      glob: "*.go"
+      run: mise exec -- golangci-lint run --fix
+      stage_fixed: true
+    tidy:
+      run: mise exec -- go mod tidy && git diff --exit-code go.mod go.sum
+
+pre-push:
+  parallel: true
+  commands:
+    test:
+      run: mise exec -- go test ./...
+    build:
+      run: mise exec -- go build ./cmd/artifact-helper
