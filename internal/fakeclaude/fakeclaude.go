@@ -89,6 +89,10 @@ func (s Spec) run(args []string) (int, error) {
 			return s.InfoCode, nil
 		}
 	}
+	// claude -p offers no Artifact tool unless CLAUDE_CODE_ARTIFACT is on, so neither does the fake.
+	if v := strings.ToLower(os.Getenv("CLAUDE_CODE_ARTIFACT")); v != "1" && v != "true" && v != "yes" && v != "on" {
+		return 0, errors.New("CLAUDE_CODE_ARTIFACT is not on, so claude -p would offer no Artifact tool")
+	}
 	time.Sleep(s.Sleep)
 	for name, content := range s.Files {
 		p := filepath.FromSlash(name)
