@@ -3,6 +3,7 @@ package headless
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -606,5 +607,250 @@ func TestValidURL(t *testing.T) {
 		if ValidURL(s) != want {
 			t.Errorf("ValidURL(%q) = %v", s, !want)
 		}
+	}
+}
+
+func TestEveryOperationReportsAFailedOrUnreadableRun(t *testing.T) {
+	ctx := context.Background()
+	ops := []struct {
+		name string
+		call func(t *testing.T, o Options) error
+	}{
+		{"publish", func(t *testing.T, o Options) error {
+			_, err := Publish(ctx, o, Request{Path: page(t, "p.html")})
+			return err
+		}},
+		{"read", func(t *testing.T, o Options) error { _, err := Read(ctx, o, ReadRequest{URL: link}); return err }},
+		{"list", func(t *testing.T, o Options) error { _, err := ListArtifacts(ctx, o, "", 0); return err }},
+		{"files", func(t *testing.T, o Options) error { _, err := ListFiles(ctx, o, link); return err }},
+		{"edit fetching", func(t *testing.T, o Options) error {
+			_, err := EditArtifact(ctx, o, EditRequest{URL: link, Edits: []Edit{{"v2", "v3"}}})
+			return err
+		}},
+		{"edit publishing", func(t *testing.T, o Options) error {
+			_, err := EditArtifact(ctx, o, EditRequest{URL: link, Path: page(t, "p.html"), Edits: []Edit{{"v2", "v3"}}})
+			return err
+		}},
+		{"comments", func(t *testing.T, o Options) error { _, err := Comments(ctx, o, link, "", ""); return err }},
+		{"reply", func(t *testing.T, o Options) error {
+			_, err := ReplyToThread(ctx, o, link, threadUUID, "Thanks", false)
+			return err
+		}},
+		{"resolve", func(t *testing.T, o Options) error { _, err := ResolveThread(ctx, o, link, threadUUID); return err }},
+		{"share", func(t *testing.T, o Options) error {
+			o.AllowShare = true
+			_, err := Share(ctx, o, ShareRequest{URL: link, Mode: "org"})
+			return err
+		}},
+	}
+	failures := []struct {
+		name, stdout string
+		code         int
+		want         string
+	}{
+		{"crash", "segfault", 2, "claude-failed"},
+		{"no structured answer", `{"type":"result","subtype":"success","result":"I give up"}`, 0, "bad-output"},
+	}
+	for _, op := range ops {
+		for _, f := range failures {
+			t.Run(op.name+"/"+f.name, func(t *testing.T) {
+				bin, _ := fakeClaude(t, map[string]string{"": f.stdout}, f.code, nil)
+				wantRefusal(t, op.call(t, Options{Claude: bin}), f.want)
+			})
+		}
+	}
+}
+
+func TestArgumentsAreRefusedBeforeAnyRun(t *testing.T) {
+	ctx := context.Background()
+	o := Options{Claude: "/no/such/claude", AllowShare: true} // a run would refuse with no-claude instead
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "folder.html")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty.html")
+	blocker := filepath.Join(dir, "blocker")
+	for _, f := range []string{empty, blocker} {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	edits := []Edit{{"v2", "v3"}}
+	tooMany := strings.Fields(strings.Repeat("sam@example.com ", MaxSharePeople+1))
+	cases := []struct {
+		name, want string
+		call       func() error
+	}{
+		{"publish without a file", "invalid-file", func() error { _, err := Publish(ctx, o, Request{}); return err }},
+		{"publish a folder", "invalid-file", func() error { _, err := Publish(ctx, o, Request{Path: folder}); return err }},
+		{"publish an empty file", "invalid-file", func() error { _, err := Publish(ctx, o, Request{Path: empty}); return err }},
+		{"read without a link", "invalid-url", func() error { _, err := Read(ctx, o, ReadRequest{}); return err }},
+		{"read into a file", "invalid-args", func() error {
+			_, err := Read(ctx, o, ReadRequest{URL: link, OutDir: filepath.Join(blocker, "out")})
+			return err
+		}},
+		{"edit without a link", "invalid-url", func() error { _, err := EditArtifact(ctx, o, EditRequest{Edits: edits}); return err }},
+		{"edit without edits", "invalid-args", func() error { _, err := EditArtifact(ctx, o, EditRequest{URL: link}); return err }},
+		{"edit a missing file", "invalid-file", func() error {
+			_, err := EditArtifact(ctx, o, EditRequest{URL: link, Path: filepath.Join(dir, "gone.html"), Edits: edits})
+			return err
+		}},
+		{"comments without a link", "invalid-url", func() error { _, err := Comments(ctx, o, "", "", ""); return err }},
+		{"comments with a forged cursor", "invalid-args", func() error { _, err := Comments(ctx, o, link, "", `c" and more`); return err }},
+		{"reply without a link", "invalid-url", func() error { _, err := ReplyToThread(ctx, o, "", threadUUID, "Hi", false); return err }},
+		{"resolve without a link", "invalid-url", func() error { _, err := ResolveThread(ctx, o, "", threadUUID); return err }},
+		{"resolve a bad thread", "invalid-thread", func() error { _, err := ResolveThread(ctx, o, link, "nope"); return err }},
+		{"share with too many people", "invalid-args", func() error {
+			_, err := Share(ctx, o, ShareRequest{URL: link, Mode: "people", People: tooMany})
+			return err
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { wantRefusal(t, c.call(), c.want) })
+	}
+}
+
+func TestReadTrustsAReportedFileOnlyInsideItsDirectory(t *testing.T) {
+	answer := func(path string) string {
+		return `{"type":"result","subtype":"success","structured_output":{"path":"` + path + `","error":""}}`
+	}
+	// Nothing at the asked-for path, but the run saved the file it reports: that one counts.
+	bin, _ := fakeClaude(t, map[string]string{"read": answer("other.html")}, 0, map[string]string{"other.html": "<p>x</p>"})
+	res, err := Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link, OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(res.SavedPath) != "other.html" {
+		t.Fatalf("saved at %s", res.SavedPath)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"read": answer("../outside.html")}, 0, nil)
+	_, err = Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link, OutDir: t.TempDir()})
+	wantRefusal(t, err, "bad-output")
+}
+
+func TestRunOutputEdges(t *testing.T) {
+	ctx := context.Background()
+	publish := func(stdout string) error {
+		bin, _ := fakeClaude(t, map[string]string{"": stdout}, 0, nil)
+		_, err := Publish(ctx, Options{Claude: bin}, Request{Path: page(t, "p.html")})
+		return err
+	}
+	// Lines before the result object are noise.
+	if err := publish("Starting up\n" + linkOK); err != nil {
+		t.Fatal(err)
+	}
+	// A failed run that says nothing is named by its subtype.
+	r := wantRefusal(t, publish(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}`), "run-failed")
+	if !strings.Contains(r.Message, "error_during_execution") {
+		t.Fatalf("message = %q", r.Message)
+	}
+	// An answer of the wrong shape.
+	wantRefusal(t, publish(`{"type":"result","subtype":"success","structured_output":"a string"}`), "bad-output")
+}
+
+func TestToolRefusalsAndSparseAnswers(t *testing.T) {
+	ctx := context.Background()
+	answer := func(v string) string {
+		return `{"type":"result","subtype":"success","result":"Declined by policy","structured_output":` + v + `}`
+	}
+	bin, _ := fakeClaude(t, map[string]string{
+		"list":     answer(`{"artifacts":[],"total":0,"raw":"","error":"not allowed"}`),
+		"files":    answer(`{"files":[],"version":"","raw":"","error":"not allowed"}`),
+		"comments": answer(`{"threads":[],"raw":"","more_cursor":"","error":"not allowed"}`),
+		"resolve":  answer(`{"replied":false,"resolved":false,"message":"","error":""}`),
+		"share":    answer(`{"shared":false,"message":"","error":""}`),
+	}, 0, nil)
+	o := Options{Claude: bin, AllowShare: true}
+	_, err := ListArtifacts(ctx, o, "", 0)
+	wantRefusal(t, err, "list-refused")
+	_, err = ListFiles(ctx, o, link)
+	wantRefusal(t, err, "files-refused")
+	_, err = Comments(ctx, o, link, "", "")
+	wantRefusal(t, err, "comments-refused")
+	// With neither an error nor a message, a refusal quotes the run's reply.
+	_, err = ResolveThread(ctx, o, link, threadUUID)
+	if r := wantRefusal(t, err, "thread-refused"); !strings.Contains(r.Message, "Declined by policy") {
+		t.Fatalf("message = %q", r.Message)
+	}
+	_, err = Share(ctx, o, ShareRequest{URL: link, Mode: "org"})
+	if r := wantRefusal(t, err, "share-refused"); !strings.Contains(r.Message, "Declined by policy") {
+		t.Fatalf("message = %q", r.Message)
+	}
+	// A share's message stands in for a missing error.
+	bin, _ = fakeClaude(t, map[string]string{"share": answer(`{"shared":false,"message":"sharing is off for this artifact","error":""}`)}, 0, nil)
+	_, err = Share(ctx, Options{Claude: bin, AllowShare: true}, ShareRequest{URL: link, Mode: "org"})
+	if r := wantRefusal(t, err, "share-refused"); !strings.Contains(r.Message, "sharing is off") {
+		t.Fatalf("message = %q", r.Message)
+	}
+	// No threads, or a thread without replies, come back as empty lists rather than null.
+	bin, _ = fakeClaude(t, map[string]string{"comments": answer(`{"threads":null,"raw":"No threads","more_cursor":"","error":""}`)}, 0, nil)
+	res, err := Comments(ctx, Options{Claude: bin}, link, "", "")
+	if err != nil || res.Threads == nil {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"comments": answer(`{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Hi","resolved":false,"activated":true,"replies":null}],"raw":"1 thread","more_cursor":"","error":""}`)}, 0, nil)
+	res, err = Comments(ctx, Options{Claude: bin}, link, "", "")
+	if err != nil || len(res.Threads) != 1 || res.Threads[0].Replies == nil {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestAccountChecksThatFail(t *testing.T) {
+	ctx := context.Background()
+	p := page(t, "p.html")
+	claude := func(auth string, code int) string {
+		return fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: auth, InfoCode: code, Outputs: map[string]string{"": linkOK}})
+	}
+	_, err := Doctor(ctx, Options{Claude: claude(authStatus, 1)})
+	wantRefusal(t, err, "claude-failed") // --version failed
+	_, err = Doctor(ctx, Options{Claude: claude("Unknown command: auth", 0)})
+	wantRefusal(t, err, "bad-output")
+	_, err = Publish(ctx, Options{Claude: claude("crashed", 1), Organization: "Example Inc"}, Request{Path: p})
+	wantRefusal(t, err, "claude-failed")
+	_, err = Publish(ctx, Options{Claude: claude(`{"loggedIn": false}`, 0), Organization: "Example Inc"}, Request{Path: p})
+	wantRefusal(t, err, "not-logged-in")
+}
+
+func TestAccountNames(t *testing.T) {
+	for _, c := range []struct{ email, org, method, health, account string }{
+		{"me@example.com", "Example Inc", "claude.ai", "me@example.com in Example Inc", "me@example.com in Example Inc"},
+		{"me@example.com", "", "claude.ai", "me@example.com", "me@example.com"},
+		{"", "Example Inc", "claude.ai", "Example Inc", "Example Inc"},
+		{"", "", "oauth_token", "", "an account claude does not name (oauth_token)"},
+	} {
+		h := &Health{Email: c.email, Organization: c.org}
+		a := account{Email: c.email, Organization: c.org, AuthMethod: c.method}
+		if h.Account() != c.health || a.String() != c.account {
+			t.Errorf("%+v: Account() = %q, String() = %q", c, h.Account(), a.String())
+		}
+	}
+}
+
+func TestVerboseLogAndClaudeOnPath(t *testing.T) {
+	bin, record := fakeClaude(t, map[string]string{"": linkOK}, 0, nil)
+	t.Setenv("PATH", filepath.Dir(bin))
+	var log strings.Builder
+	if _, err := Publish(context.Background(), Options{Log: &log}, Request{Path: page(t, "p.html"), URL: link, Icon: "chart"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), "running ") {
+		t.Fatalf("log = %q", log.String())
+	}
+	// An update keeps its icon unless one is given.
+	if args := fakeclaude.Runs(t, record)[0]; !strings.Contains(args[len(args)-1], `"icon":"chart"`) {
+		t.Fatalf("prompt = %s", args[len(args)-1])
+	}
+}
+
+func TestRefusalHelpers(t *testing.T) {
+	if r := (&Refusal{Code: "x", Message: "went wrong"}); r.Error() != "went wrong" {
+		t.Fatalf("Error() = %q", r.Error())
+	}
+	if _, ok := IsRefusal(errors.New("plain")); ok {
+		t.Fatal("a plain error is not a refusal")
+	}
+	if got := tail("abcdef", 3); got != "…def" {
+		t.Fatalf("tail = %q", got)
 	}
 }

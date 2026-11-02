@@ -26,3 +26,12 @@ func TestEveryShippedStubDigestIsReleased(t *testing.T) {
 		t.Error("a name outside frontmatter was read")
 	}
 }
+
+func TestFind(t *testing.T) {
+	if s, ok := Find("artifact-helper"); !ok || s.Name != "artifact-helper" {
+		t.Fatalf("Find(artifact-helper) = %+v, %v", s, ok)
+	}
+	if _, ok := Find("nope"); ok {
+		t.Fatal("Find(nope) found a skill")
+	}
+}

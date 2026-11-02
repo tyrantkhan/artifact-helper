@@ -329,3 +329,71 @@ func TestVersionMatchesEveryManifest(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryCommandRefusesAnUnknownFlag(t *testing.T) {
+	for _, c := range commands() {
+		code, out, errs := run(t, nil, "", c.name, "--bogus")
+		e, _ := result(t, out)["error"].(map[string]any)
+		if code != 1 || e["code"] != "error" || !strings.Contains(errs, "flag provided but not defined") || !strings.Contains(errs, "Usage: artifact-helper "+c.name) {
+			t.Errorf("%s: code=%d out=%q err=%q", c.name, code, out, errs)
+		}
+	}
+}
+
+func TestVerboseLogsAndDoubleDashEndsFlags(t *testing.T) {
+	bin := fakeClaude(t, map[string]string{"publish": linkOK}, nil)
+	p := filepath.Join(t.TempDir(), "page.html")
+	if err := os.WriteFile(p, []byte("<title>x</title>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := run(t, map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}, "", "publish", "--verbose", "--title", "x", "--", p)
+	if code != 0 || !strings.Contains(errs, "running ") {
+		t.Fatalf("exit %d: %s\n%s", code, out, errs)
+	}
+	code, out, errs = run(t, map[string]string{"ARTIFACT_HELPER_CLAUDE": bin, "ARTIFACT_HELPER_VERBOSE": "1"}, "", "publish", p)
+	if code != 0 || !strings.Contains(errs, "running ") {
+		t.Fatalf("exit %d: %s\n%s", code, out, errs)
+	}
+}
+
+func TestGetSkillTakesOneNameAtMost(t *testing.T) {
+	code, out, _ := run(t, nil, "", "get-skill", "artifact-helper", "another")
+	if e, _ := result(t, out)["error"].(map[string]any); code != 1 || e["code"] != "invalid-args" {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+}
+
+func TestInstallUsesTheHomeDirectory(t *testing.T) {
+	// No injected machine: install looks up the real home directory.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	code, out, errs := run(t, nil, "", "install", "--dry-run")
+	var r struct{ Plan skillinstall.Plan }
+	if err := json.Unmarshal([]byte(out), &r); err != nil || code != 0 || len(r.Plan.Skills) != 1 || len(r.Plan.Skills[0].Ops) != 1 {
+		t.Fatalf("exit %d: %s\n%s", code, out, errs)
+	}
+	if p := r.Plan.Skills[0].Ops[0].Path; !strings.HasPrefix(p, home) {
+		t.Fatalf("planned %s, outside %s", p, home)
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	code, _, errs = run(t, nil, "", "install", "--dry-run")
+	if code != 1 || !strings.Contains(errs, "finding the home directory") {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+}
+
+func TestSummarizeCountsWhatHappened(t *testing.T) {
+	plan := &skillinstall.Plan{Skills: []skillinstall.Entry{
+		{Name: "a", Ops: []skillinstall.Op{{Kind: skillinstall.Update}, {Kind: skillinstall.Write}, {Kind: skillinstall.Write}}},
+		{Name: "b"},
+	}}
+	outs := []skillinstall.Outcome{{Ops: []skillinstall.OpOutcome{{Status: "done"}, {Status: "failed"}, {Status: "changed"}}}, {}}
+	if got, want := summarize(plan, outs), "a: 1 updated · 1 changed meanwhile · 1 failed\nb: nothing to do"; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+	if got := (&exitError{code: 3}).Error(); got != "exit 3" {
+		t.Fatalf("Error() = %q", got)
+	}
+}

@@ -197,3 +197,40 @@ func TestRemoveTakesOnlyOurs(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestMakeNeedsAnEnvironment(t *testing.T) {
+	if _, err := Make(Env{}, Options{}); err == nil {
+		t.Fatal("an empty environment was accepted")
+	}
+	e := env(t)
+	e.Cwd = ""
+	if _, err := Make(e, Options{Local: true}); err == nil {
+		t.Fatal("a local install without a current directory was accepted")
+	}
+}
+
+func TestNamedSkillsAndAFileInTheWay(t *testing.T) {
+	e := env(t)
+	plan, err := Make(e, Options{Skills: []string{name, name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Named twice, planned once.
+	op := only(t, plan)
+	// A file where the skill's folder belongs is someone else's: left alone, replaced only with Force.
+	write(t, op.Path, []byte("not a folder"))
+	plan, err = Make(e, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op := only(t, plan); op.Kind != Leave || op.Reason != ReasonOther || op.Observed.Kind != "file" {
+		t.Fatalf("op = %+v", op)
+	}
+	plan, err = Make(e, Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op := only(t, plan); op.Kind != Replace {
+		t.Fatalf("op = %+v", op)
+	}
+}
