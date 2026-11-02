@@ -34,6 +34,7 @@ type Spec struct {
 	Outputs map[string]string
 	Code    int           // exit code of a run
 	Sleep   time.Duration // how long a run waits before answering
+	Linger  time.Duration // how long a run waits after answering, as one that hangs before it exits
 	// Files are created by every run in its working directory, by slash-separated relative path, unless they
 	// already exist.
 	Files map[string]string
@@ -150,6 +151,7 @@ func (s Spec) run(args []string) (int, error) {
 		}
 	}
 	fmt.Println(out)
+	time.Sleep(s.Linger)
 	return s.Code, nil
 }
 

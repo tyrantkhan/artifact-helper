@@ -234,6 +234,17 @@ func TestPublishTimesOut(t *testing.T) {
 	}
 }
 
+func TestAPublishBeforeATimeoutIsReported(t *testing.T) {
+	// The run published, then hung until it was stopped: the page is live, so the publish is reported.
+	published := fakeclaude.Calls("", fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`, Text: "Published",
+		Data: `{"url":"` + link + `","updated":false,"version":"1793629160-0a57"}`})
+	bin := fakeclaude.Install(t, fakeclaude.Spec{Outputs: map[string]string{"publish": published}, Linger: 10 * time.Second})
+	res, err := Publish(context.Background(), Options{Claude: bin, Timeout: 500 * time.Millisecond}, Request{Path: page(t, "p.html")})
+	if err != nil || res.URL != link || res.Version != "1793629160-0a57" || !strings.Contains(res.Warning, "did not finish") {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
 func TestReadSavesThePage(t *testing.T) {
 	// The fake creates the file where the Artifact tool would: out_dir/<published path>, out_dir being the cwd.
 	bin, record := fakeClaude(t, map[string]string{"read": readOK}, 0, map[string]string{"index.html": "<p>live</p>"})
@@ -1423,16 +1434,10 @@ func TestUpdatesReadsEverythingFromTheToolsData(t *testing.T) {
 	if p := prompt[len(prompt)-1]; !strings.Contains(p, link) || !strings.Contains(p, other) || !strings.Contains(p, `"action":"list"`) {
 		t.Fatalf("prompt = %s", p)
 	}
-	// Nothing to check runs nothing; too many, a bad link, a refused or missing listing refuse.
+	// Nothing to check runs nothing; a bad link, a refused or missing listing refuse.
 	if res, err := Updates(ctx, Options{Claude: "/no/such/claude"}, nil); err != nil || len(res.Artifacts) != 0 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	many := make([]string, MaxUpdates+1)
-	for i := range many {
-		many[i] = link
-	}
-	_, err = Updates(ctx, Options{Claude: bin}, many)
-	wantRefusal(t, err, "invalid-args")
 	_, err = Updates(ctx, Options{Claude: bin}, []string{"https://example.com/x"})
 	wantRefusal(t, err, "invalid-url")
 	bin, _ = fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list"}`, Data: `{}`, Text: "no", IsError: true})}, 0, nil)

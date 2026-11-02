@@ -380,6 +380,11 @@ type Result struct {
 	// Retried is true when the tool first refused because the run had not seen the live version, which was the
 	// expected one, and the run published again.
 	Retried bool `json:"retried,omitempty"`
+	// Overwrote is the live version this publish replaced when it was not ExpectVersion: someone else's change,
+	// which the run should have refused to publish over.
+	Overwrote string `json:"overwrote,omitempty"`
+	// Warning says what went wrong after the publish went through, such as the run failing before it answered.
+	Warning string `json:"warning,omitempty"`
 	RunInfo
 }
 
@@ -397,34 +402,21 @@ func Publish(ctx context.Context, opts Options, req Request) (*Result, error) {
 	base := filepath.Base(path)
 	cr, err := run(ctx, opts, filepath.Dir(path), publishTools, linkSchema, publishPrompt(req, base), denyWrites)
 	if err != nil {
+		// A run can fail after the tool published, over budget or out of time. The page is live then, so the
+		// publish is reported, with the failure beside it.
+		if cr != nil {
+			if res, ok, perr := publishResult(cr, opts, req, path); ok {
+				if perr != nil {
+					return nil, perr
+				}
+				res.Warning = "the run failed after the publish went through: " + err.Error()
+				return res, nil
+			}
+		}
 		return nil, err
 	}
-	// The Artifact tool's own result is the authority. The model's reply can name the link while it explains
-	// a failure, so a link is never taken from prose. Only the publish call counts: an update reads the
-	// artifact first, and that read is no publish.
-	if c, ok := lastArtifactCall(cr, "publish"); ok {
-		if c.IsError {
-			return nil, notOwned(cr, refused("publish", c.Text, cr.Result))
-		}
-		var data struct {
-			URL     string `json:"url"`
-			Updated *bool  `json:"updated"`
-			Title   string `json:"title"`
-			Version string `json:"version"`
-		}
-		if json.Unmarshal(c.Data, &data) == nil && validURL(data.URL) {
-			updated := req.URL != ""
-			if data.Updated != nil {
-				updated = *data.Updated
-			}
-			if req.URL != "" && !updated {
-				return nil, &Refusal{Code: "publish-refused",
-					Message: fmt.Sprintf("the publish created a new artifact, %s, instead of updating %s", data.URL, req.URL),
-					Fix:     "tell the person both links; the new artifact holds the page, and the old link still shows the old page"}
-			}
-			return &Result{URL: data.URL, Path: path, Updated: updated, Title: data.Title, Version: data.Version,
-				Retried: publishCalls(cr) > 1, RunInfo: cr.info(opts)}, nil
-		}
+	if res, ok, err := publishResult(cr, opts, req, path); ok {
+		return res, err
 	}
 	if live := liveVersion(cr); req.ExpectVersion != "" && live != "" && live != req.ExpectVersion {
 		return nil, changedElsewhere(req, live)
@@ -444,6 +436,45 @@ func Publish(ctx context.Context, opts Options, req Request) (*Result, error) {
 		return nil, oddAnswer(out.URL)
 	}
 	return &Result{URL: out.URL, Path: path, Updated: req.URL != "", RunInfo: cr.info(opts)}, nil
+}
+
+// publishResult reads a publish from the tool's own result. The model's reply can name the link while it
+// explains a failure, so a link is never taken from prose. Only the publish call counts: an update reads the
+// artifact first, and that read is no publish. ok is false when the run made no publish call with a link.
+func publishResult(cr *claudeResult, opts Options, req Request, path string) (res *Result, ok bool, err error) {
+	c, found := lastArtifactCall(cr, "publish")
+	if !found {
+		return nil, false, nil
+	}
+	if c.IsError {
+		return nil, true, notOwned(cr, refused("publish", c.Text, cr.Result))
+	}
+	var data struct {
+		URL     string `json:"url"`
+		Updated *bool  `json:"updated"`
+		Title   string `json:"title"`
+		Version string `json:"version"`
+	}
+	// Data without a link, say from an older Claude Code, leaves the run's answer to decide.
+	if readable := json.Unmarshal(c.Data, &data) == nil && validURL(data.URL); !readable {
+		return nil, false, nil
+	}
+	updated := req.URL != ""
+	if data.Updated != nil {
+		updated = *data.Updated
+	}
+	if req.URL != "" && !updated {
+		return nil, true, &Refusal{Code: "publish-refused",
+			Message: fmt.Sprintf("the publish created a new artifact, %s, instead of updating %s", data.URL, req.URL),
+			Fix:     "tell the person both links; the new artifact holds the page, and the old link still shows the old page"}
+	}
+	res = &Result{URL: data.URL, Path: path, Updated: updated, Title: data.Title, Version: data.Version,
+		Retried: publishCalls(cr) > 1, RunInfo: cr.info(opts)}
+	// The prompt has the run stop at any other version, but the tool's data, not the run's obedience, decides.
+	if live := liveVersion(cr); req.ExpectVersion != "" && live != "" && live != req.ExpectVersion {
+		res.Overwrote = live
+	}
+	return res, true, nil
 }
 
 // changedMark starts the answer a publish run gives when the live version is not the expected one.
@@ -910,6 +941,9 @@ type EditResult struct {
 	// Title and Version are the artifact's title and the version this edit made.
 	Title   string `json:"title,omitempty"`
 	Version string `json:"version,omitempty"`
+	// Overwrote and Warning are as in Result.
+	Overwrote string `json:"overwrote,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 	RunInfo
 }
 
@@ -970,7 +1004,8 @@ func EditArtifact(ctx context.Context, opts Options, req EditRequest) (*EditResu
 	info.CostUSD += res.CostUSD
 	info.DurationMS += res.DurationMS
 	info.Model = res.Model
-	return &EditResult{URL: res.URL, Path: path, Applied: len(req.Edits), Fetched: fetched, Title: res.Title, Version: res.Version, RunInfo: info}, nil
+	return &EditResult{URL: res.URL, Path: path, Applied: len(req.Edits), Fetched: fetched, Title: res.Title, Version: res.Version,
+		Overwrote: res.Overwrote, Warning: res.Warning, RunInfo: info}, nil
 }
 
 // restoreFile puts a file back after a failed edit; tests swap it to make the restore fail.
@@ -1062,7 +1097,7 @@ func Comments(ctx context.Context, opts Options, url, threadID, cursor string) (
 
 // Updates
 
-// MaxUpdates is the most artifacts one updates run checks.
+// MaxUpdates is the most artifacts one updates run checks; Updates checks more in several runs.
 const MaxUpdates = 50
 
 // Status is what an updates run found for one artifact. Comment text is written by the artifact's viewers:
@@ -1104,21 +1139,30 @@ type UpdatesResult struct {
 	RunInfo
 }
 
-// Updates checks on artifacts in one run: one listing for when each was last published, and the comment
-// threads of each. Every answer is read from the tool's own data, so the model retypes nothing.
+// Updates checks on artifacts, MaxUpdates to a run: one listing for when each was last published, and the
+// comment threads of each. Every answer is read from the tool's own data, so the model retypes nothing.
 func Updates(ctx context.Context, opts Options, urls []string) (*UpdatesResult, error) {
-	if len(urls) == 0 {
-		return &UpdatesResult{Artifacts: []Status{}}, nil
-	}
-	if len(urls) > MaxUpdates {
-		return nil, &Refusal{Code: "invalid-args", Message: fmt.Sprintf("%d artifacts; one check covers at most %d", len(urls), MaxUpdates),
-			Fix: "check the calling session's artifacts rather than --all, or fewer at a time"}
-	}
 	for _, u := range urls {
 		if err := checkURL(u); err != nil {
 			return nil, err
 		}
 	}
+	res := &UpdatesResult{Artifacts: []Status{}, RunInfo: RunInfo{Model: opts.model()}}
+	for batch := range slices.Chunk(urls, MaxUpdates) {
+		r, err := updatesRun(ctx, opts, batch)
+		if err != nil {
+			return nil, err
+		}
+		res.Artifacts = append(res.Artifacts, r.Artifacts...)
+		res.Turns += r.Turns
+		res.CostUSD += r.CostUSD
+		res.DurationMS += r.DurationMS
+	}
+	return res, nil
+}
+
+// updatesRun checks on up to MaxUpdates artifacts in one run.
+func updatesRun(ctx context.Context, opts Options, urls []string) (*UpdatesResult, error) {
 	list, _ := json.Marshal(map[string]any{"action": "list", "scope": "all", "limit": MaxListLimit})
 	var b strings.Builder
 	b.WriteString("Task: updates. Check on claude.ai artifacts. " + script)
@@ -1519,7 +1563,9 @@ func (cr *claudeResult) info(opts Options) RunInfo {
 
 // run executes one headless run in dir and returns its result object. With no dir, the run starts in an
 // empty temporary folder rather than the caller's project, whose settings and files it has no business
-// with. A run that did not produce a result, or that Claude Code reports as failed, is a Refusal.
+// with. A run that did not produce a result, or that Claude Code reports as failed, is a Refusal. A run that
+// timed out or failed also returns what it got through, so a caller can see a tool call that went through
+// before it did.
 func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, perm permission) (*claudeResult, error) {
 	bin, err := opts.binary()
 	if err != nil {
@@ -1572,7 +1618,7 @@ func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, p
 	runErr := cmd.Run()
 	opts.logf("claude exited after %s: %v", time.Since(start).Round(time.Millisecond), runErr)
 	if ctx.Err() == context.DeadlineExceeded {
-		return nil, &Refusal{Code: "timeout", Message: fmt.Sprintf("claude did not finish within %s", opts.timeout()),
+		return &claudeResult{tools: streamTools(stdout.Bytes())}, &Refusal{Code: "timeout", Message: fmt.Sprintf("claude did not finish within %s", opts.timeout()),
 			Fix: "try again, or raise " + envTimeout + " (for example 10m) if the file is large"}
 	}
 	return parseOutput(stdout.Bytes(), stderr.String(), runErr)
@@ -1605,6 +1651,8 @@ func parseOutput(stdout []byte, stderr string, runErr error) (*claudeResult, err
 		cr.tools = streamTools(trimmed[:i])
 	}
 	if err := json.Unmarshal(last, &cr); err != nil || cr.Type != "result" {
+		// A run stopped before its result line, say by a signal, still shows the calls it made.
+		partial := &claudeResult{tools: streamTools(trimmed)}
 		text := strings.TrimSpace(stderr)
 		if text == "" {
 			text = string(trimmed)
@@ -1615,10 +1663,10 @@ func parseOutput(stdout []byte, stderr string, runErr error) (*claudeResult, err
 			return nil, &Refusal{Code: "not-logged-in", Message: "claude refused to run: " + text, Fix: loginFix}
 		}
 		if runErr != nil {
-			return nil, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude failed (%v): %s", runErr, text),
+			return partial, &Refusal{Code: "claude-failed", Message: fmt.Sprintf("claude failed (%v): %s", runErr, text),
 				Fix: "run `artifact-helper doctor`, then the same command with ARTIFACT_HELPER_VERBOSE=1 to see the run"}
 		}
-		return nil, &Refusal{Code: "bad-output", Message: "claude printed no result object: " + text,
+		return partial, &Refusal{Code: "bad-output", Message: "claude printed no result object: " + text,
 			Fix: "tell the person; they can update Claude Code with `claude update`, then run the command again"}
 	}
 	if cr.IsError || cr.Subtype != "success" {
@@ -1629,7 +1677,7 @@ func parseOutput(stdout []byte, stderr string, runErr error) (*claudeResult, err
 		if loginTrouble.MatchString(msg) {
 			return nil, &Refusal{Code: "not-logged-in", Message: "claude could not authenticate: " + msg, Fix: loginFix}
 		}
-		return nil, &Refusal{Code: "run-failed", Message: "the headless run failed: " + tail(msg, 2000),
+		return &cr, &Refusal{Code: "run-failed", Message: "the headless run failed: " + tail(msg, 2000),
 			Fix: "fix what the message names and try again"}
 	}
 	return &cr, nil

@@ -15,27 +15,30 @@ import (
 	"github.com/tyrantkhan/artifact-helper/internal/headless"
 )
 
-// published is the record of the artifacts this machine published. It is what lets the helper, not its
-// caller, own each page's link: a page published again goes to its recorded link, and a link the page moved
-// away from forwards to where it lives now.
+// published is the record of the artifacts this machine published or read. It is what lets the helper, not its
+// caller, own each page's link: a page published again goes to its recorded link, and only over the version
+// that page was published as or read at.
 type published struct {
 	Artifacts []*tracked `json:"artifacts"`
 }
 
-// tracked is one artifact this machine published.
+// tracked is one artifact this machine published or read.
 type tracked struct {
 	URL   string `json:"url"`
 	Title string `json:"title,omitempty"`
-	// File is the local page last published to it.
-	File string `json:"file,omitempty"`
+	// Files are the local copies of the page, each with the version it was published as or read at: the version
+	// a publish of that file goes over. A file belongs to one artifact at a time.
+	Files map[string]string `json:"files,omitempty"`
 	// Sessions are the Claude Code sessions that published or edited it, by CLAUDE_CODE_SESSION_ID.
 	Sessions       []string `json:"sessions,omitempty"`
 	OrganizationID string   `json:"organizationId,omitempty"`
-	// Version is the live version this machine last published or read. A publish goes only over it.
-	Version     string `json:"version,omitempty"`
+	// Version is the newest version this machine published or read.
+	Version string `json:"version,omitempty"`
+	// PublishedAt is when this machine last published it; empty for an artifact it only read.
 	PublishedAt string `json:"publishedAt,omitempty"`
-	// Aliases are links the page lived at before, which forward to URL.
-	Aliases []string `json:"aliases,omitempty"`
+	// MovedTo is the artifact its page was published to with --new. That page, published or edited with this
+	// link, goes there.
+	MovedTo string `json:"movedTo,omitempty"`
 	// CheckedAt is when updates last looked at it, and Seen the comment ids it found then.
 	CheckedAt string   `json:"checkedAt,omitempty"`
 	Seen      []string `json:"seen,omitempty"`
@@ -64,14 +67,15 @@ func loadRecord(env *Env) (*published, error) {
 	}
 	var p published
 	if err := json.Unmarshal(data, &p); err != nil {
-		return nil, &headless.Refusal{Code: "invalid-config", Message: fmt.Sprintf("%s is not valid JSON: %v", path, err),
+		return nil, &headless.Refusal{Code: "invalid-record", Message: fmt.Sprintf("%s is not valid JSON: %v", path, err),
 			Fix: "tell the person; the record of published artifacts is damaged, and moving it aside starts a new one"}
 	}
 	return &p, nil
 }
 
 // changeRecord reads the record afresh, applies change and saves it, so two sessions publishing at once lose
-// as little as one save can. The file is replaced whole, never left half written.
+// as little as one save can. Each save writes a file of its own and renames it into place, so the record is
+// never left half written.
 func changeRecord(env *Env, change func(*published)) error {
 	p, err := loadRecord(env)
 	if err != nil {
@@ -82,71 +86,141 @@ func changeRecord(env *Env, change func(*published)) error {
 	if err != nil {
 		return err
 	}
-	// Strings and slices of them always encode.
+	// Strings, maps and slices of them always encode.
 	data, _ := json.MarshalIndent(p, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "published-*.json")
+	if err != nil {
 		return fmt.Errorf("saving %s: %w", path, err)
 	}
-	return nil
-}
-
-// byFile is the artifact the page at file was last published to.
-func (p *published) byFile(file string) *tracked {
-	for _, t := range p.Artifacts {
-		if t.File == file {
-			return t
+	_, werr := tmp.Write(append(data, '\n'))
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		if rerr := os.Remove(tmp.Name()); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			werr = errors.Join(werr, rerr)
 		}
+		return fmt.Errorf("saving %s: %w", path, werr)
 	}
 	return nil
 }
 
-// byURL is the artifact at url, whether url is its link now or one it moved away from.
+// canonical is the one spelling of a file's path the record uses, whatever directory or symlink it was named
+// through, such as /tmp and /private/tmp on macOS.
+func canonical(file string) string {
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return filepath.Clean(file)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
+}
+
+// sameLink reports whether two links name the same artifact; a link may end in a slash.
+func sameLink(a, b string) bool { return strings.TrimSuffix(a, "/") == strings.TrimSuffix(b, "/") }
+
+// byURL is the artifact at url.
 func (p *published) byURL(url string) *tracked {
 	for _, t := range p.Artifacts {
-		if t.URL == url || slices.Contains(t.Aliases, url) {
+		if sameLink(t.URL, url) {
 			return t
 		}
 	}
 	return nil
 }
 
-// forward is the link url's artifact lives at now, and whether that differs from url.
-func (p *published) forward(url string) (string, bool) {
-	if t := p.byURL(url); t != nil && t.URL != url {
-		return t.URL, true
+// byFile is the artifact the page at file was published to or read from.
+func (p *published) byFile(file string) *tracked {
+	file = canonical(file)
+	for _, t := range p.Artifacts {
+		if _, ok := t.Files[file]; ok {
+			return t
+		}
 	}
-	return url, false
+	return nil
 }
 
-// recordPublish notes that file was published as res. A page that moved to a new link takes its old links
-// along as aliases, so they forward.
-func (p *published) recordPublish(file string, res *headless.Result, session, organizationID string, now time.Time) {
-	t := p.byURL(res.URL)
+// follow is where a publish of file to url goes instead, and whether it does: the artifact url's page moved to
+// with --new, when file is that page. Any other file goes to url itself, which is still live.
+func (p *published) follow(url, file string) (string, bool) {
+	cur := strings.TrimSuffix(url, "/")
+	for seen := map[string]bool{}; !seen[cur]; {
+		seen[cur] = true
+		t := p.byURL(cur)
+		if t == nil || t.MovedTo == "" {
+			break
+		}
+		cur = t.MovedTo
+	}
+	if sameLink(cur, url) || file == "" {
+		return url, false
+	}
+	if t := p.byFile(file); t == nil || !sameLink(t.URL, cur) {
+		return url, false
+	}
+	return cur, true
+}
+
+// base is the version a publish of file to t goes over: the one file was published as or read at, or else the
+// newest this machine has seen of t.
+func (t *tracked) base(file string) string {
+	if v := t.Files[canonical(file)]; v != "" {
+		return v
+	}
+	return t.Version
+}
+
+// entry is the artifact at url, added to the record when it is not there yet.
+func (p *published) entry(url string) *tracked {
+	t := p.byURL(url)
 	if t == nil {
-		t = &tracked{URL: res.URL}
+		t = &tracked{URL: strings.TrimSuffix(url, "/")}
 		p.Artifacts = append(p.Artifacts, t)
 	}
-	if file != "" {
-		if old := p.byFile(file); old != nil && old != t {
-			t.Aliases = append(t.Aliases, old.URL)
-			t.Aliases = append(t.Aliases, old.Aliases...)
-			t.Sessions = append(t.Sessions, old.Sessions...)
-			p.Artifacts = slices.DeleteFunc(p.Artifacts, func(x *tracked) bool { return x == old })
+	return t
+}
+
+// setFile notes that file holds t's page at version, and no other artifact's.
+func (p *published) setFile(t *tracked, file, version string) {
+	file = canonical(file)
+	for _, o := range p.Artifacts {
+		if o != t {
+			delete(o.Files, file)
 		}
-		t.File = file
 	}
+	if t.Files == nil {
+		t.Files = map[string]string{}
+	}
+	t.Files[file] = version
+}
+
+// saw notes that this machine published or read version of t; Version keeps the newest.
+func (t *tracked) saw(version string) {
+	if version == "" {
+		return
+	}
+	if t.Version == "" || versionSecs(version) >= versionSecs(t.Version) {
+		t.Version = version
+	}
+}
+
+// recordPublish notes that file was published as res; file is empty for a page fetched only to be edited.
+func (p *published) recordPublish(file string, res *headless.Result, session, organizationID string, now time.Time) {
+	t := p.entry(res.URL)
+	if file != "" {
+		p.setFile(t, file, res.Version)
+	}
+	t.saw(res.Version)
 	if res.Title != "" {
 		t.Title = res.Title
-	}
-	if res.Version != "" {
-		t.Version = res.Version
 	}
 	if session != "" && !slices.Contains(t.Sessions, session) {
 		t.Sessions = append(t.Sessions, session)
@@ -157,16 +231,29 @@ func (p *published) recordPublish(file string, res *headless.Result, session, or
 	t.PublishedAt = now.UTC().Format(time.RFC3339)
 }
 
+// recordRead notes that file holds url's page at version, so the file may be published over that version.
+func (p *published) recordRead(file, url, version string) {
+	t := p.entry(url)
+	p.setFile(t, file, version)
+	t.saw(version)
+}
+
+// versionSecs is the Unix second a version id starts with, or -1 when it starts with none.
+func versionSecs(version string) int64 {
+	secs, err := strconv.ParseInt(strings.SplitN(version, "-", 2)[0], 10, 64)
+	if err != nil {
+		return -1
+	}
+	return secs
+}
+
 // newerThan reports whether a version published at updatedAt is newer than version, whose id starts with the
 // Unix second it was published. It is false when either is unknown.
 func newerThan(updatedAt, version string) bool {
 	at, err := time.Parse(time.RFC3339, updatedAt)
-	if err != nil || version == "" {
-		return false
-	}
-	secs, err := strconv.ParseInt(strings.SplitN(version, "-", 2)[0], 10, 64)
 	if err != nil {
 		return false
 	}
-	return at.Unix() > secs
+	secs := versionSecs(version)
+	return secs >= 0 && at.Unix() > secs
 }
