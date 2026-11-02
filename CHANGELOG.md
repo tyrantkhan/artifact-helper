@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.4...v0.1.5) (2026-11-02)
+
+
+### Performance
+
+* read list and files from the tool's own data ([#12](https://github.com/tyrantkhan/artifact-helper/issues/12)) ([60968b9](https://github.com/tyrantkhan/artifact-helper/commit/60968b98adba360411e76b51b475344170c1a236))
+
 ## [0.1.4](https://github.com/tyrantkhan/artifact-helper/compare/v0.1.3...v0.1.4) (2026-11-02)
 
 
