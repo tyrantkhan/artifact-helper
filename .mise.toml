@@ -4,7 +4,8 @@ golangci-lint = "latest"
 lefthook = "latest"
 
 [vars]
-ldflags = '-X github.com/tyrantkhan/artifact-helper/internal/cli.Version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)'
+version_flag = '-X github.com/tyrantkhan/artifact-helper/internal/cli.Version='
+git_version = 'git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev'
 
 [tasks.setup]
 description = "Install the tools above and the git hooks"
@@ -12,11 +13,11 @@ run = ["mise install", "lefthook install"]
 
 [tasks.build]
 description = "Build bin/artifact-helper, versioned from git"
-run = 'go build -ldflags "{{vars.ldflags}}" -o bin/artifact-helper ./cmd/artifact-helper'
+run = 'go build -ldflags "{{vars.version_flag}}$({{vars.git_version}})" -o bin/artifact-helper ./cmd/artifact-helper'
 
 [tasks.install]
 description = "Install artifact-helper into GOPATH/bin, versioned from git"
-run = 'go install -ldflags "{{vars.ldflags}}" ./cmd/artifact-helper'
+run = 'go install -ldflags "{{vars.version_flag}}$({{vars.git_version}})" ./cmd/artifact-helper'
 
 [tasks.test]
 description = "Run the tests"
