@@ -26,8 +26,9 @@ const (
 
 // Spec says how the fake answers.
 type Spec struct {
-	Version string // printed for --version
-	Auth    string // printed for auth, such as auth status
+	Version  string // printed for --version
+	Auth     string // printed for auth, such as auth status
+	InfoCode int    // exit code of --version and auth
 	// Outputs holds the stdout of a run, chosen by the "Task: <op>." marker that starts the prompt (the last
 	// argument), falling back to the "" key.
 	Outputs map[string]string
@@ -82,10 +83,10 @@ func (s Spec) run(args []string) (int, error) {
 		switch args[0] {
 		case "--version":
 			fmt.Println(s.Version)
-			return 0, nil
+			return s.InfoCode, nil
 		case "auth":
 			fmt.Println(s.Auth)
-			return 0, nil
+			return s.InfoCode, nil
 		}
 	}
 	time.Sleep(s.Sleep)
