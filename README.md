@@ -110,6 +110,7 @@ Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`,
 | `ARTIFACT_HELPER_VERBOSE` | unset | `1` logs the command line and timing of each run on stderr |
 | `ARTIFACT_HELPER_ALLOW_SHARE` | unset | `1` lets `share` run; see above |
 | `ARTIFACT_HELPER_ORGANIZATION` | unset | The organization `claude` must be signed in to. Every command checks `claude auth status` first and refuses a login in any other organization with code `wrong-organization`, naming both, before anything runs. A login that names no organization (a bare token) is refused with `organization-unverifiable`. |
+| `ARTIFACT_HELPER_CLAUDE_CONFIG_DIR` | unset | The Claude Code config folder, and so the login, that `claude` runs with. Unset, `claude` inherits `CLAUDE_CONFIG_DIR` from the session that calls the tool, which can be signed in to another account. `default` drops it, so `claude` uses its own folder and login. An absolute path replaces it. `doctor` shows the folder in `configDir`. No flag. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | A token from `claude setup-token`, for a machine with no `claude auth login` |
 
 ## What the headless run can and cannot do

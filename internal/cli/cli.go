@@ -123,6 +123,10 @@ Environment:
   ARTIFACT_HELPER_ALLOW_SHARE     set to 1 to let share run; see artifact-helper help share
   ARTIFACT_HELPER_ORGANIZATION    the organization claude must be signed in to; a login in any other is
                                   refused with code wrong-organization before anything runs
+  ARTIFACT_HELPER_CLAUDE_CONFIG_DIR
+                                  the Claude Code config folder, and so the login, claude runs with:
+                                  default drops an inherited CLAUDE_CONFIG_DIR, an absolute path
+                                  replaces it (default: inherit CLAUDE_CONFIG_DIR)
   CLAUDE_CODE_OAUTH_TOKEN                a token from claude setup-token, for a machine without a claude login
 `)
 }
@@ -561,11 +565,13 @@ Check that the claude binary is found and signed in, and show the settings a run
 "organization" name the signed-in account when claude reports them (a claude.ai login does; a bare token may not).
 With ARTIFACT_HELPER_ORGANIZATION (or --organization) set, the login must belong to that organization; any
 other is refused with code wrong-organization, as every command refuses it before running anything.
+"configDir" is the CLAUDE_CONFIG_DIR claude ran with, or "default" when it ran without one; it decides
+which login claude uses.
 
 Result:
   {"ok": true, "command": "doctor", "claude": "/usr/local/bin/claude", "version": "2.1.0 (Claude Code)",
    "loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "organization": "Example Inc",
-   "expectedOrganization": "Example Inc", "model": "sonnet", "timeout": "5m0s"}
+   "expectedOrganization": "Example Inc", "configDir": "default", "model": "sonnet", "timeout": "5m0s"}
 
 A refusal's code is no-claude, not-logged-in, wrong-organization, organization-unverifiable or claude-failed.
 `

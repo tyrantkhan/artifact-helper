@@ -606,6 +606,99 @@ func TestOrganizationCheck(t *testing.T) {
 	}
 }
 
+func TestConfigDir(t *testing.T) {
+	other, mine := t.TempDir(), t.TempDir()
+	only := func(k, v string) func(string) string {
+		return func(kk string) string {
+			if kk == k {
+				return v
+			}
+			return ""
+		}
+	}
+	for v, want := range map[string]string{"default": ConfigDirDefault, " " + mine + " ": mine, "": ""} {
+		o, err := OptionsFromEnv(only("ARTIFACT_HELPER_CLAUDE_CONFIG_DIR", v))
+		if err != nil || o.ConfigDir != want {
+			t.Errorf("%q: config dir = %q, err = %v", v, o.ConfigDir, err)
+		}
+	}
+	_, err := OptionsFromEnv(only("ARTIFACT_HELPER_CLAUDE_CONFIG_DIR", "relative/dir"))
+	wantRefusal(t, err, "invalid-env")
+
+	base := []string{"HOME=/h", "CLAUDE_CONFIG_DIR=" + other}
+	if got := (Options{Environ: base}).childEnv(); len(got) != 2 || got[1] != "CLAUDE_CONFIG_DIR="+other {
+		t.Fatalf("inherited env = %v", got)
+	}
+	if got := (Options{Environ: base, ConfigDir: ConfigDirDefault}).childEnv(); len(got) != 1 || got[0] != "HOME=/h" {
+		t.Fatalf("default env = %v", got)
+	}
+	if got := (Options{Environ: base, ConfigDir: mine}).childEnv(); len(got) != 2 || got[1] != "CLAUDE_CONFIG_DIR="+mine {
+		t.Fatalf("replaced env = %v", got)
+	}
+	// The folder reported is the one os/exec hands claude: the last entry, and an empty value is no folder.
+	for env, want := range map[string]string{"CLAUDE_CONFIG_DIR=/a CLAUDE_CONFIG_DIR=/b": "/b", "CLAUDE_CONFIG_DIR=/a CLAUDE_CONFIG_DIR=": ConfigDirDefault, "HOME=/h": ConfigDirDefault} {
+		if got := (Options{Environ: strings.Fields(env)}).claudeConfigDir(); got != want {
+			t.Errorf("%s: config dir = %q, want %q", env, got, want)
+		}
+	}
+
+	// Every claude the tool starts gets the same choice: --version and auth status from Doctor, and the run.
+	envRecord := filepath.Join(t.TempDir(), "env")
+	bin := fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: authStatus,
+		Outputs: map[string]string{"": linkOK}, EnvRecord: envRecord, EnvName: "CLAUDE_CONFIG_DIR"})
+	lines := func() []string {
+		t.Helper()
+		data, err := os.ReadFile(envRecord)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(envRecord); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	// The test may run in a session that sets CLAUDE_CONFIG_DIR itself; leave only the test's own.
+	var env []string
+	for _, kv := range os.Environ() {
+		if _, ok := configVar(kv); !ok {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "CLAUDE_CONFIG_DIR="+other)
+	h, err := Doctor(context.Background(), Options{Claude: bin, Environ: env, ConfigDir: ConfigDirDefault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lines(); len(got) != 2 || got[0] != "CLAUDE_CONFIG_DIR" || got[1] != "CLAUDE_CONFIG_DIR" || h.ConfigDir != ConfigDirDefault {
+		t.Fatalf("default: env = %v, health config dir = %q", got, h.ConfigDir)
+	}
+	p := page(t, "p.html")
+	if _, err := Publish(context.Background(), Options{Claude: bin, Environ: env, ConfigDir: mine, Organization: "Example Inc"}, Request{Path: p}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lines(); len(got) != 2 || got[0] != "CLAUDE_CONFIG_DIR="+mine || got[1] != got[0] {
+		t.Fatalf("path: env = %v", got)
+	}
+	h, err = Doctor(context.Background(), Options{Claude: bin, Environ: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lines(); len(got) != 2 || got[0] != "CLAUDE_CONFIG_DIR="+other || h.ConfigDir != other {
+		t.Fatalf("inherited: env = %v, health config dir = %q", got, h.ConfigDir)
+	}
+
+	// A wrong organization names the folder claude ran with, when one was set, and how to drop it.
+	_, err = Publish(context.Background(), Options{Claude: bin, Environ: env, Organization: "Other Co"}, Request{Path: p})
+	rf := wantRefusal(t, err, "wrong-organization")
+	if !strings.Contains(rf.Message, "CLAUDE_CONFIG_DIR="+other) || !strings.Contains(rf.Fix, "ARTIFACT_HELPER_CLAUDE_CONFIG_DIR=default") {
+		t.Fatalf("refusal = %+v", rf)
+	}
+	_, err = Publish(context.Background(), Options{Claude: bin, Environ: env, ConfigDir: ConfigDirDefault, Organization: "Other Co"}, Request{Path: p})
+	if rf := wantRefusal(t, err, "wrong-organization"); strings.Contains(rf.Message, "CLAUDE_CONFIG_DIR") || strings.Contains(rf.Fix, "CLAUDE_CONFIG_DIR") {
+		t.Fatalf("a default folder was named: %+v", rf)
+	}
+}
+
 func TestValidURL(t *testing.T) {
 	for s, want := range map[string]bool{
 		"https://claude.ai/artifact/Abc_12-3": true, "https://claude.ai/code/artifact/0f1e2d3c": true,

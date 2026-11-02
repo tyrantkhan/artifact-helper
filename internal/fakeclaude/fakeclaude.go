@@ -39,6 +39,10 @@ type Spec struct {
 	Files map[string]string
 	// Record, when set, is the file each invocation appends its working directory and arguments to.
 	Record string
+	// EnvRecord, when set, is the file each invocation appends one line to: EnvName=value, or EnvName alone
+	// when the variable is not in its environment.
+	EnvRecord string
+	EnvName   string
 }
 
 // Main answers as the fake claude and exits when the running binary is a copy Install made; otherwise it
@@ -76,6 +80,11 @@ func fail(err error) {
 func (s Spec) run(args []string) (int, error) {
 	if s.Record != "" {
 		if err := s.record(args); err != nil {
+			return 0, err
+		}
+	}
+	if s.EnvRecord != "" {
+		if err := s.recordEnv(); err != nil {
 			return 0, err
 		}
 	}
@@ -121,6 +130,22 @@ func (s Spec) run(args []string) (int, error) {
 	}
 	fmt.Println(out)
 	return s.Code, nil
+}
+
+func (s Spec) recordEnv() error {
+	line := s.EnvName
+	if v, ok := os.LookupEnv(s.EnvName); ok {
+		line += "=" + v
+	}
+	f, err := os.OpenFile(s.EnvRecord, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(f, line+"\n")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func (s Spec) record(args []string) error {

@@ -49,6 +49,9 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
   sent to Claude; the `not-activated` detection is a regex that has not yet seen the real wording.
 - `claude auth status` carries `email` and `orgName` only for a claude.ai login; a bare token has neither,
   which is why `ARTIFACT_HELPER_ORGANIZATION` refuses with `organization-unverifiable` rather than guessing.
+- Every `claude` the tool starts inherits `CLAUDE_CONFIG_DIR`, so a calling session that sets it publishes as
+  that folder's account. `ARTIFACT_HELPER_CLAUDE_CONFIG_DIR=default` drops it. Dropping is the only way back to
+  the default login: Claude Code picks the keychain entry by whether the variable is set, not by its value.
 - Runs stream (`--output-format stream-json --verbose`). The last line is the result, with `structured_output`
   when `--json-schema` is passed; `decode` reads it. Each tool result event before it carries the tool's own
   data in `tool_use_result`, which `list` and `files` read instead of having the model retype the listing:

@@ -45,10 +45,19 @@ const (
 	envBudget  = "ARTIFACT_HELPER_MAX_BUDGET_USD"
 	envShare   = "ARTIFACT_HELPER_ALLOW_SHARE"
 	envOrg     = "ARTIFACT_HELPER_ORGANIZATION"
+	envConfig  = "ARTIFACT_HELPER_CLAUDE_CONFIG_DIR"
 
 	// envArtifactTool is Claude Code's switch for the Artifact tool. claude -p leaves the tool off unless it is
 	// set, so a run would have nothing to call.
 	envArtifactTool = "CLAUDE_CODE_ARTIFACT"
+	// envClaudeConfig is the folder Claude Code keeps its settings and login in. The session that calls this
+	// tool may set it to a folder signed in to another account, and claude inherits it.
+	envClaudeConfig = "CLAUDE_CONFIG_DIR"
+
+	// ConfigDirDefault, as Options.ConfigDir, removes CLAUDE_CONFIG_DIR from claude's environment, so claude
+	// uses its default folder and that folder's login. Setting the variable to the default folder's path is
+	// not the same: Claude Code picks the keychain entry by whether the variable is set, not by its value.
+	ConfigDirDefault = "default"
 )
 
 // Refusal is an error the caller can act on: a stable code, what went wrong, and what to do about it.
@@ -95,6 +104,10 @@ type Options struct {
 	// refuses with code "wrong-organization" when the login belongs to another, so a machine with several
 	// Claude accounts never publishes to the wrong one.
 	Organization string
+	// ConfigDir chooses the Claude Code config folder, and with it the login, that claude runs with. Empty
+	// passes CLAUDE_CONFIG_DIR through from Environ; ConfigDirDefault removes it; any other value is an
+	// absolute path, set as CLAUDE_CONFIG_DIR.
+	ConfigDir string
 }
 
 // OptionsFromEnv reads the ARTIFACT_HELPER_* variables through getenv. Variables left unset keep their
@@ -124,7 +137,67 @@ func OptionsFromEnv(getenv func(string) string) (Options, error) {
 		o.AllowShare = true
 	}
 	o.Organization = strings.TrimSpace(getenv(envOrg))
+	if v := strings.TrimSpace(getenv(envConfig)); v != "" {
+		if v != ConfigDirDefault && !filepath.IsAbs(v) {
+			return o, &Refusal{Code: "invalid-env", Message: fmt.Sprintf("%s=%q is neither %q nor an absolute path", envConfig, v, ConfigDirDefault),
+				Fix: "set it to default for Claude Code's own folder and login, or to the absolute path of a Claude Code config folder"}
+		}
+		o.ConfigDir = v
+	}
 	return o, nil
+}
+
+// childEnv is the environment claude runs with: Environ (this process's when nil), with CLAUDE_CONFIG_DIR
+// removed or replaced as ConfigDir says.
+func (o Options) childEnv() []string {
+	if o.ConfigDir == "" {
+		return o.Environ
+	}
+	env := o.Environ
+	if env == nil {
+		env = os.Environ()
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if _, ok := configVar(kv); !ok {
+			out = append(out, kv)
+		}
+	}
+	if o.ConfigDir != ConfigDirDefault {
+		out = append(out, envClaudeConfig+"="+o.ConfigDir)
+	}
+	return out
+}
+
+// claudeConfigDir is the CLAUDE_CONFIG_DIR claude runs with, or ConfigDirDefault when it runs without one. It
+// reads the last entry, as os/exec keeps the last of duplicates; Claude Code treats an empty value as unset.
+func (o Options) claudeConfigDir() string {
+	env := o.childEnv()
+	if env == nil {
+		env = os.Environ()
+	}
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := configVar(env[i]); ok {
+			if v == "" {
+				return ConfigDirDefault
+			}
+			return v
+		}
+	}
+	return ConfigDirDefault
+}
+
+// configVar reports whether kv sets CLAUDE_CONFIG_DIR, and to what. On Windows the name matches in any case,
+// as it does for Claude Code there.
+func configVar(kv string) (string, bool) {
+	name, value, ok := strings.Cut(kv, "=")
+	if !ok {
+		return "", false
+	}
+	if name == envClaudeConfig || (runtime.GOOS == "windows" && strings.EqualFold(name, envClaudeConfig)) {
+		return value, true
+	}
+	return "", false
 }
 
 func (o Options) model() string {
@@ -1051,7 +1124,7 @@ func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, b
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = opts.Environ
+	cmd.Env = opts.childEnv()
 	cmd.Env = withArtifactTool(cmd.Environ())
 	cmd.Stdin = strings.NewReader("")
 	var stdout, stderr bytes.Buffer
@@ -1254,8 +1327,10 @@ type Health struct {
 	Organization string `json:"organization,omitempty"`
 	// ExpectedOrganization is ARTIFACT_HELPER_ORGANIZATION, when set; the login must belong to it.
 	ExpectedOrganization string `json:"expectedOrganization,omitempty"`
-	Model                string `json:"model"`
-	Timeout              string `json:"timeout"`
+	// ConfigDir is the CLAUDE_CONFIG_DIR claude ran with, or "default" when it ran without one.
+	ConfigDir string `json:"configDir"`
+	Model     string `json:"model"`
+	Timeout   string `json:"timeout"`
 }
 
 // Account says who is signed in, in a few words, or "" when claude did not say.
@@ -1303,7 +1378,7 @@ func readAuthStatus(ctx context.Context, opts Options, bin string) (account, err
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "auth", "status")
-	cmd.Env = opts.Environ
+	cmd.Env = opts.childEnv()
 	cmd.Stdin = strings.NewReader("")
 	raw, err := cmd.CombinedOutput()
 	out := strings.TrimSpace(string(raw))
@@ -1344,9 +1419,13 @@ func checkOrganization(ctx context.Context, opts Options, bin string) (account, 
 			Fix:     "sign in with `claude auth login` so claude reports the organization, or unset " + envOrg}
 	}
 	if !a.InOrganization(opts.Organization) {
-		return a, &Refusal{Code: "wrong-organization",
-			Message: fmt.Sprintf("claude is signed in as %s, but %s expects %s; nothing was run", a, envOrg, opts.Organization),
-			Fix:     "run `claude auth login` with an account in " + opts.Organization + ", or set " + envOrg + " to the organization you mean"}
+		msg := fmt.Sprintf("claude is signed in as %s, but %s expects %s; nothing was run", a, envOrg, opts.Organization)
+		fix := "run `claude auth login` with an account in " + opts.Organization + ", or set " + envOrg + " to the organization you mean"
+		if dir := opts.claudeConfigDir(); dir != ConfigDirDefault {
+			msg += fmt.Sprintf(" (claude ran with %s=%s)", envClaudeConfig, dir)
+			fix += "; if that folder holds another account's login, set " + envConfig + "=default"
+		}
+		return a, &Refusal{Code: "wrong-organization", Message: msg, Fix: fix}
 	}
 	return a, nil
 }
@@ -1358,12 +1437,13 @@ func Doctor(ctx context.Context, opts Options) (*Health, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Health{Claude: bin, Model: opts.model(), Timeout: opts.timeout().String(), ExpectedOrganization: opts.Organization}
+	h := &Health{Claude: bin, Model: opts.model(), Timeout: opts.timeout().String(), ExpectedOrganization: opts.Organization,
+		ConfigDir: opts.claudeConfigDir()}
 	{
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bin, "--version")
-		cmd.Env = opts.Environ
+		cmd.Env = opts.childEnv()
 		cmd.Stdin = strings.NewReader("")
 		out, err := cmd.CombinedOutput()
 		v := strings.TrimSpace(string(out))
