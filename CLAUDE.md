@@ -9,6 +9,8 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - `mise run build` → `bin/artifact-helper` with the git version baked in; `mise run test`; `mise run lint`.
   Plain `go build ./cmd/artifact-helper`, `go test ./...` and `golangci-lint run` do the same.
+- `mise run dev -- <args>` builds this checkout and runs it. Never `go install` a dev build: mise puts Go's bin
+  first on PATH, where it shadows the released binary that `install.sh` puts in `~/.local/bin`.
 - Tests never call the real `claude`: `internal/fakeclaude` copies the test binary to a temporary `claude`
   that answers by the `Task: <op>.` marker that starts every prompt, on every system (`fakeClaude` in
   `internal/headless/headless_test.go`). Keep that marker first in any new prompt.

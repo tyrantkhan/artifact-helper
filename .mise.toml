@@ -15,9 +15,11 @@ run = ["mise install", "lefthook install"]
 description = "Build bin/artifact-helper, versioned from git"
 run = 'go build -ldflags "{{vars.version_flag}}$({{vars.git_version}})" -o bin/artifact-helper ./cmd/artifact-helper'
 
-[tasks.install]
-description = "Install artifact-helper into GOPATH/bin, versioned from git"
-run = 'go install -ldflags "{{vars.version_flag}}$({{vars.git_version}})" ./cmd/artifact-helper'
+# Not go install: that puts a dev build on PATH, where it shadows the released one.
+[tasks.dev]
+description = "Build this checkout and run it with the arguments after --, installing nothing"
+depends = ["build"]
+run = "./bin/artifact-helper"
 
 [tasks.test]
 description = "Run the tests"
