@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -406,4 +407,54 @@ func mustMake(t *testing.T, e Env, opts Options) *Plan {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// When the copy cannot be put back either, the outcome says where it is, so nothing is lost without a trace.
+func TestAFailedForceThatCannotRestoreSaysWhereTheCopyIs(t *testing.T) {
+	e := env(t)
+	edited := string(stub()) + "\nMy own note.\n"
+	write(t, filepath.Join(skillDir(e), "SKILL.md"), []byte(edited))
+	p := mustMake(t, e, Options{Force: true})
+	failWrites(t)
+	restoreCopy = func(string, string) error { return errors.New("busy") }
+	t.Cleanup(func() { restoreCopy = os.Rename })
+	r := Execute(e, p)[0].Ops[0]
+	if r.Status != StatusFailed || r.BackupPath == "" || !strings.Contains(r.Error, r.BackupPath) {
+		t.Fatalf("outcome = %+v", r)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.BackupPath, "SKILL.md")); string(b) != edited {
+		t.Fatalf("the backup holds %q", b)
+	}
+}
+
+func TestAReplaceWithoutAClockStillStampsTheBackup(t *testing.T) {
+	e := env(t)
+	e.Now = nil
+	write(t, filepath.Join(skillDir(e), "SKILL.md"), []byte("---\nname: other\n---\n"))
+	outs := Execute(e, mustMake(t, e, Options{Force: true}))
+	if Failed(outs) || outs[0].Ops[0].BackupPath == "" {
+		t.Fatalf("outs = %+v", outs)
+	}
+}
+
+func TestAnUnreadableFolderIsLeftAlone(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file permissions do not block this user here")
+	}
+	// A skill folder it cannot list, and a skills folder it cannot look into.
+	for _, locked := range []func(Env) string{skillDir, func(e Env) string { return filepath.Dir(skillDir(e)) }} {
+		e := env(t)
+		write(t, filepath.Join(skillDir(e), "SKILL.md"), stub())
+		dir := locked(e)
+		if err := os.Chmod(dir, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(dir, 0o755) })
+		if op := only(t, mustMake(t, e, Options{Force: true})); op.Kind != Leave || op.Reason != ReasonUnreadable {
+			t.Fatalf("%s: op = %+v", dir, op)
+		}
+		if res, _ := Remove(e, Options{}); len(res) != 1 || res[0].State != StateUnreadable {
+			t.Fatalf("%s: res = %+v", dir, res)
+		}
+	}
 }

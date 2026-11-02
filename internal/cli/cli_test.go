@@ -429,3 +429,18 @@ func TestSummarizeCountsWhatHappened(t *testing.T) {
 		t.Fatalf("Error() = %q", got)
 	}
 }
+
+func TestHelpAndLocalInstallWithASavedConfig(t *testing.T) {
+	// With a config saved, --help reaches the flag parser, which prints the usage.
+	if code, _, errs := run(t, nil, "", "publish", "--help"); code != 0 || !strings.HasPrefix(errs, "Usage: artifact-helper publish") {
+		t.Fatalf("code=%d err=%.60q", code, errs)
+	}
+	// With no injected machine, a local install looks up the current folder, and needs no home.
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	code, out, errs := run(t, nil, "", "install", "--local", "--dry-run")
+	if r := result(t, out); code != 0 || r["plan"].(map[string]any)["scope"] != "local" {
+		t.Fatalf("code=%d out=%s err=%s", code, out, errs)
+	}
+}

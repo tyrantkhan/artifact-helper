@@ -841,7 +841,7 @@ func EditArtifact(ctx context.Context, opts Options, req EditRequest) (*EditResu
 	res, err := Publish(ctx, opts, Request{Path: path, URL: req.URL})
 	if err != nil {
 		// Put the file back, so it still matches the live page and the same edits can be tried again.
-		if rerr := os.WriteFile(path, content, st.Mode().Perm()); rerr != nil {
+		if rerr := restoreFile(path, content, st.Mode().Perm()); rerr != nil {
 			note := fmt.Sprintf("; the edits stay applied in %s, which could not be put back: %v", path, rerr)
 			if rf, ok := IsRefusal(err); ok {
 				kept := *rf
@@ -858,6 +858,9 @@ func EditArtifact(ctx context.Context, opts Options, req EditRequest) (*EditResu
 	info.Model = res.Model
 	return &EditResult{URL: res.URL, Path: path, Applied: len(req.Edits), Fetched: fetched, RunInfo: info}, nil
 }
+
+// restoreFile puts a file back after a failed edit; tests swap it to make the restore fail.
+var restoreFile = os.WriteFile
 
 // Comments
 

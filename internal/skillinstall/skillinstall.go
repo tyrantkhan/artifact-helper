@@ -376,15 +376,18 @@ func apply(env Env, root string, op Op, s skills.Skill) (string, error) {
 	}
 	// Put the replaced copy back, so a failed --force leaves the folder as it found it.
 	if rerr := os.RemoveAll(op.Path); rerr == nil {
-		if rerr = os.Rename(backup, op.Path); rerr == nil {
+		if rerr = restoreCopy(backup, op.Path); rerr == nil {
 			return "", fmt.Errorf("%w; the copy that was there is back in place", err)
 		}
 	}
 	return backup, fmt.Errorf("%w; the copy that was there is in %s", err, backup)
 }
 
-// writeStub writes a file; tests swap it to make a write fail.
-var writeStub = os.WriteFile
+// writeStub writes a file, and restoreCopy moves a replaced copy back; tests swap them to make one fail.
+var (
+	writeStub   = os.WriteFile
+	restoreCopy = os.Rename
+)
 
 // writeCopy puts stub in dir as SKILL.md. It writes beside, then renames, so a reader never sees half a stub,
 // and a write that fails leaves no temporary file behind.

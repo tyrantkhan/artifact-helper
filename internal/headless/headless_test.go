@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1275,4 +1276,66 @@ func TestOrganizationByID(t *testing.T) {
 	if auth != 1 {
 		t.Fatalf("doctor ran claude auth status %d times", auth)
 	}
+}
+
+// skipWithoutPermissions skips a test that makes a file unreadable, which Windows and root ignore.
+func skipWithoutPermissions(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file permissions do not block this user here")
+	}
+}
+
+func TestEditSaysWhenItCouldNotPutTheFileBack(t *testing.T) {
+	restoreFile = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
+	t.Cleanup(func() { restoreFile = os.WriteFile })
+	bin, _ := fakeClaude(t, map[string]string{"publish": `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Reached max turns"}`}, 0, nil)
+	p := page(t, "page.html")
+	_, err := EditArtifact(context.Background(), Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v2", "Probe v3"}}})
+	if rf := wantRefusal(t, err, "run-failed"); !strings.Contains(rf.Message, "the edits stay applied in "+p) {
+		t.Fatalf("message = %q", rf.Message)
+	}
+}
+
+func TestReadSaysWhyTheFileCouldNotLand(t *testing.T) {
+	ctx := context.Background()
+	// A folder where the file belongs: the move into place fails.
+	out := t.TempDir()
+	if err := os.Mkdir(filepath.Join(out, "index.html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin, _ := fakeClaude(t, map[string]string{"read": readOK}, 0, map[string]string{"index.html": "<p>x</p>"})
+	if _, err := Read(ctx, Options{Claude: bin}, ReadRequest{URL: link, OutDir: out}); err == nil || !strings.Contains(err.Error(), "moving the file into") {
+		t.Fatalf("err = %v", err)
+	}
+	// A file where a folder of the published path belongs.
+	out = t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "assets"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"read": strings.Replace(readOK, "index.html", "assets/app.js", 1)}, 0, map[string]string{"assets/app.js": "js"})
+	if _, err := Read(ctx, Options{Claude: bin}, ReadRequest{URL: link, Path: "assets/app.js", OutDir: out}); err == nil || !strings.Contains(err.Error(), "creating") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadAndEditRefuseFilesTheyCannotUse(t *testing.T) {
+	skipWithoutPermissions(t)
+	ctx := context.Background()
+	bin, _ := fakeClaude(t, map[string]string{"read": readOK}, 0, nil)
+	// An output folder it cannot write to.
+	out := t.TempDir()
+	if err := os.Chmod(out, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(out, 0o755) })
+	_, err := Read(ctx, Options{Claude: bin}, ReadRequest{URL: link, OutDir: out})
+	wantRefusal(t, err, "invalid-args")
+	// A page it cannot read.
+	p := page(t, "page.html")
+	if err := os.Chmod(p, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	_, err = EditArtifact(ctx, Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v2", "Probe v3"}}})
+	wantRefusal(t, err, "invalid-file")
 }
