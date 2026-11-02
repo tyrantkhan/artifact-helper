@@ -35,8 +35,18 @@ func run(t *testing.T, env map[string]string, stdin string, args ...string) (cod
 	t.Helper()
 	var out, errb bytes.Buffer
 	e := &Env{Args: args, Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errb,
-		Getenv: func(k string) string { return env[k] }, Environ: func() []string { return nil }}
+		Getenv: func(k string) string { return env[k] }, Environ: func() []string { return nil }, Config: savedConfig(t, config{ClaudeConfigDir: "default"})}
 	return Main(e), out.String(), errb.String()
+}
+
+// savedConfig writes c where init would, in a temporary folder, so no test reads or writes the real one.
+func savedConfig(t *testing.T, c config) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "artifact-helper", "config.json")
+	if err := saveConfig(path, c); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func result(t *testing.T, out string) map[string]any {
@@ -242,7 +252,8 @@ func runMachine(t *testing.T, senv *skillinstall.Env, args ...string) (int, stri
 	t.Helper()
 	var out bytes.Buffer
 	e := &Env{Args: args, Stdin: strings.NewReader(""), Stdout: &out, Stderr: io.Discard,
-		Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Skills: senv}
+		Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Skills: senv,
+		Config: savedConfig(t, config{ClaudeConfigDir: "default"})}
 	return Main(e), out.String()
 }
 

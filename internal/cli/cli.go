@@ -33,6 +33,10 @@ type Env struct {
 	Environ func() []string
 	// Skills is how install and uninstall see the machine. Nil uses the real home directory and cwd.
 	Skills *skillinstall.Env
+	// Config is the path of the config init saves. Empty uses artifact-helper/config.json in the user config folder.
+	Config string
+	// Terminal reports whether Stdin or Stdout is a terminal. Nil checks the real files.
+	Terminal func(stream any) bool
 }
 
 type command struct {
@@ -44,6 +48,7 @@ type command struct {
 
 func commands() []command {
 	return []command{
+		{"init", "Set up this machine: the Claude account to use and, optionally, the plugin", initHelp, cmdInit},
 		{"publish", "Publish one file as an artifact and print its link", publishHelp, cmdPublish},
 		{"list", "List the account's artifacts", listHelp, cmdList},
 		{"read", "Save an artifact's page (or another of its files) to a local file, or list its files", readHelp, cmdRead},
@@ -82,6 +87,17 @@ func Main(env *Env) int {
 		if c.name != name {
 			continue
 		}
+		if !openCommands[name] {
+			if err := requireConfig(env); err != nil {
+				// Usage needs no config, but the command itself never runs without one.
+				if asksForHelp(env.Args[1:]) {
+					fmt.Fprint(env.Stderr, c.help)
+					return 0
+				}
+				writeError(env, name, err)
+				return 1
+			}
+		}
 		err := c.run(env, env.Args[1:])
 		if err == nil || errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -110,11 +126,14 @@ Usage: artifact-helper <command> [flags]
 		fmt.Fprintf(w, "  %-10s %s\n", c.name, c.summary)
 	}
 	fmt.Fprint(w, `
-Every command but get-skill prints one JSON object. A refusal has "ok": false and an "error" with "code",
-"message" and "fix". Run artifact-helper help <command> for its flags and result, and --version for
-this build's version.
+Run artifact-helper init once first: every command but get-skill and init refuses with not-initialized
+until it has saved its setup.
 
-Environment:
+Every command but get-skill prints one JSON object; in a terminal, init and doctor print a readable
+summary instead. A refusal has "ok": false and an "error" with "code", "message" and "fix". Run
+artifact-helper help <command> for its flags and result, and --version for this build's version.
+
+Environment (overrides what init saved):
   ARTIFACT_HELPER_CLAUDE          path of the claude binary (default: claude on PATH)
   ARTIFACT_HELPER_MODEL           model for the headless runs (default `+headless.DefaultModel+`)
   ARTIFACT_HELPER_TIMEOUT         how long one run may take (default `+headless.DefaultTimeout.String()+`)
@@ -123,6 +142,11 @@ Environment:
   ARTIFACT_HELPER_ALLOW_SHARE     set to 1 to let share run; see artifact-helper help share
   ARTIFACT_HELPER_ORGANIZATION    the organization claude must be signed in to; a login in any other is
                                   refused with code wrong-organization before anything runs
+                                  (default: what init saved)
+  ARTIFACT_HELPER_CLAUDE_CONFIG_DIR
+                                  the Claude Code config folder, and so the login, claude runs with:
+                                  default drops an inherited CLAUDE_CONFIG_DIR, an absolute path
+                                  replaces it (default: what init saved)
   CLAUDE_CODE_OAUTH_TOKEN                a token from claude setup-token, for a machine without a claude login
 `)
 }
@@ -189,8 +213,23 @@ func badArgs(name, format string, args ...any) error {
 	return &headless.Refusal{Code: "invalid-args", Message: fmt.Sprintf(format, args...), Fix: "run artifact-helper help " + name}
 }
 
-// options reads the environment into headless options, with the flags a command may add on top.
-func options(env *Env) (headless.Options, error) {
+// asksForHelp reports whether args may ask for a command's usage. It can mistake a flag's value for a request,
+// which is why it only ever leads to printing the usage.
+func asksForHelp(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		switch name, _, _ := strings.Cut(a, "="); name {
+		case "-h", "-help", "--help":
+			return true
+		}
+	}
+	return false
+}
+
+// envOptions reads the environment into headless options, without the config.
+func envOptions(env *Env) (headless.Options, error) {
 	opts, err := headless.OptionsFromEnv(env.Getenv)
 	if err != nil {
 		return opts, err
@@ -198,6 +237,30 @@ func options(env *Env) (headless.Options, error) {
 	opts.Environ = env.Environ()
 	if v := env.Getenv("ARTIFACT_HELPER_VERBOSE"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
 		opts.Log = env.Stderr
+	}
+	return opts, nil
+}
+
+// options reads the environment into headless options, filling what it leaves unset from the config init
+// saved; the flags a command parses go on top.
+func options(env *Env) (headless.Options, error) {
+	opts, err := envOptions(env)
+	if err != nil {
+		return opts, err
+	}
+	path, err := configPath(env)
+	if err != nil {
+		return opts, err
+	}
+	c, err := loadConfig(path)
+	if err != nil || c == nil {
+		return opts, err
+	}
+	if opts.Organization == "" {
+		opts.Organization = c.Organization
+	}
+	if opts.ConfigDir == "" {
+		opts.ConfigDir = c.ClaudeConfigDir
 	}
 	return opts, nil
 }
@@ -559,15 +622,20 @@ const doctorHelp = `Usage: artifact-helper doctor [--claude <path>] [--model <na
 
 Check that the claude binary is found and signed in, and show the settings a run would use. "email" and
 "organization" name the signed-in account when claude reports them (a claude.ai login does; a bare token may not).
-With ARTIFACT_HELPER_ORGANIZATION (or --organization) set, the login must belong to that organization; any
-other is refused with code wrong-organization, as every command refuses it before running anything.
+With an organization saved by init, set in ARTIFACT_HELPER_ORGANIZATION or passed as --organization, the
+login must belong to it; any other is refused with code wrong-organization, as every command refuses it
+before running anything. Like every command, doctor needs init first. In a terminal it prints a readable
+summary instead of JSON.
+"configDir" is the CLAUDE_CONFIG_DIR claude ran with, or "default" when it ran without one; it decides
+which login claude uses.
 
 Result:
   {"ok": true, "command": "doctor", "claude": "/usr/local/bin/claude", "version": "2.1.0 (Claude Code)",
    "loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "organization": "Example Inc",
-   "expectedOrganization": "Example Inc", "model": "sonnet", "timeout": "5m0s"}
+   "expectedOrganization": "Example Inc", "configDir": "default", "model": "sonnet", "timeout": "5m0s"}
 
-A refusal's code is no-claude, not-logged-in, wrong-organization, organization-unverifiable or claude-failed.
+A refusal's code is not-initialized, invalid-config, no-claude, not-logged-in, wrong-organization,
+organization-unverifiable or claude-failed.
 `
 
 func cmdDoctor(env *Env, args []string) error {
@@ -578,10 +646,54 @@ func cmdDoctor(env *Env, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	h, err := headless.Doctor(ctx, opts)
+	if isTerminal(env, env.Stdout) {
+		path, _ := configPath(env)
+		printDoctor(newUI(env), h, err, path)
+		if err != nil {
+			return &exitError{code: 1}
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	return writeJSON(env, "doctor", h)
+}
+
+// printDoctor is doctor's readable view. h is nil when claude could not run at all.
+func printDoctor(u *ui, h *headless.Health, err error, configPath string) {
+	u.title("artifact-helper " + Version + " doctor")
+	if h == nil {
+		u.row(u.mark(false), "claude", "not usable")
+		u.problem(err)
+		return
+	}
+	u.row(u.mark(true), "claude", h.Claude+" "+u.dim("("+h.Version+")"))
+	if h.LoggedIn {
+		u.row(u.mark(true), "signed in", h.Account()+" "+u.dim("("+h.AuthMethod+")"))
+	} else {
+		u.row(u.mark(false), "signed in", "no")
+	}
+	rf, _ := headless.IsRefusal(err)
+	switch {
+	case h.ExpectedOrganization == "":
+		u.row(u.bullet(), "organization", u.dim("not checked"))
+	case rf != nil && (rf.Code == "wrong-organization" || rf.Code == "organization-unverifiable"):
+		u.row(u.mark(false), "organization", h.ExpectedOrganization+" required")
+	case err != nil:
+		u.row(u.bullet(), "organization", h.ExpectedOrganization+" required "+u.dim("(not checked)"))
+	default:
+		u.row(u.mark(true), "organization", h.ExpectedOrganization+" "+u.dim("(required)"))
+	}
+	u.row(u.bullet(), "config dir", h.ConfigDir)
+	u.row(u.bullet(), "settings", configPath)
+	u.row(u.bullet(), "model", h.Model)
+	u.row(u.bullet(), "timeout", h.Timeout)
+	if err != nil {
+		u.problem(err)
+		return
+	}
+	fmt.Fprintln(u.w)
 }
 
 const getSkillHelp = `Usage: artifact-helper get-skill [--json]

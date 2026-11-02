@@ -23,6 +23,10 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - `cmd/artifact-helper` is `main`; `internal/cli` is the command table (an `Env` with injected stdio, every
   command prints one JSON object, a refusal is `{"ok": false, "error": {code, message, fix}}`).
+- `init` saves a config (`internal/cli/config.go`) that every command but `get-skill` and `init` requires
+  (`not-initialized`); environment variables and flags override it. Tests MUST set `Env.Config` to a
+  temporary path (`savedConfig`), so no test reads or writes the real one. `init` and `doctor` print a
+  readable view only when `Env.Terminal` says so (`internal/cli/pretty.go`), standard library only.
 - `internal/headless` drives `claude -p`: `run` (flags, timeout, parsing), one function per operation, and
   the `Refusal` type with its stable codes. Add a new operation there, then a command in `internal/cli`.
 - `internal/skillinstall` installs the skill into Claude Code's skills folder, Orca-style: only an untouched
@@ -49,6 +53,11 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
   sent to Claude; the `not-activated` detection is a regex that has not yet seen the real wording.
 - `claude auth status` carries `email` and `orgName` only for a claude.ai login; a bare token has neither,
   which is why `ARTIFACT_HELPER_ORGANIZATION` refuses with `organization-unverifiable` rather than guessing.
+- Every `claude` the tool starts inherits `CLAUDE_CONFIG_DIR`, so a calling session that sets it publishes as
+  that folder's account. `ARTIFACT_HELPER_CLAUDE_CONFIG_DIR=default` drops it. Dropping is the only way back to
+  the default login: Claude Code picks the keychain entry by whether the variable is set, not by its value.
+- Claude Code's Bash tool gives commands no terminal on stdin or stdout, so terminal detection is what keeps
+  agents on JSON while a person at a terminal gets the readable view.
 - Runs stream (`--output-format stream-json --verbose`). The last line is the result, with `structured_output`
   when `--json-schema` is passed; `decode` reads it. Each tool result event before it carries the tool's own
   data in `tool_use_result`, which `list` and `files` read instead of having the model retype the listing:
