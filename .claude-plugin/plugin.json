@@ -1,0 +1,24 @@
+{
+  "name": "artifact-helper",
+  "version": "0.1.3",
+  "description": "Publish, edit, share and answer comments on claude.ai artifacts from any agent, through the Claude subscription already signed in on the machine.",
+  "author": {
+    "name": "tyrantkhan",
+    "url": "https://tyrantkhan.github.io"
+  },
+  "homepage": "https://github.com/tyrantkhan/artifact-helper",
+  "repository": "https://github.com/tyrantkhan/artifact-helper",
+  "documentationUrl": "https://github.com/tyrantkhan/artifact-helper#readme",
+  "supportUrl": "https://github.com/tyrantkhan/artifact-helper/issues",
+  "privacyPolicyUrl": "https://github.com/tyrantkhan/artifact-helper/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/tyrantkhan/artifact-helper/blob/main/LICENSE",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "keywords": [
+    "artifacts",
+    "claude-ai",
+    "publish",
+    "skills"
+  ],
+  "license": "MIT"
+}
