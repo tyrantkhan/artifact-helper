@@ -24,13 +24,18 @@ if [[ -z "$commit_msg" ]]; then
 fi
 
 status=0
-for place in pr_title priority sections; do
-  if [[ "${!place}" != "$commit_msg" ]]; then
+# same reports, and marks the check failed, when place lists other types than lefthook's commit-msg check.
+same() {
+  local place=$1 list=$2
+  if [[ "$list" != "$commit_msg" ]]; then
     echo "::error::The commit types in $place differ from lefthook's commit-msg check:"
-    diff <(echo "$commit_msg") <(echo "${!place}") || true
+    diff <(echo "$commit_msg") <(echo "$list") || true
     status=1
   fi
-done
+}
+same "the PR-title workflow" "$pr_title"
+same "the priority script" "$priority"
+same "release-please's visible sections" "$sections"
 if missing=$(comm -23 <(echo "$commit_msg") <(echo "$branch")) && [[ -n "$missing" ]]; then
   echo "::error::Lefthook's branch check does not allow: $missing"
   status=1
