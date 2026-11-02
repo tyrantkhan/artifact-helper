@@ -4,19 +4,14 @@
 package skillinstall
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
-	"github.com/tyrantkhan/artifact-helper/internal/headless"
 	"github.com/tyrantkhan/artifact-helper/skills"
 )
 
@@ -32,8 +27,12 @@ type Env struct {
 	Now func() time.Time
 }
 
-// BackupFolder is the folder beside the skills folder that replaced copies are moved to.
-const BackupFolder = ".artifact-helper-skill-backups"
+// backupFolder is the folder beside the skills folder that replaced copies are moved to.
+const backupFolder = ".artifact-helper-skill-backups"
+
+// tempName is the file a stub is written to before it is renamed into place. A copy that holds one left by a
+// failed run still counts as untouched.
+const tempName = ".SKILL.md.tmp"
 
 // Root is Claude Code's skills folder: the project's with local, else $CLAUDE_CONFIG_DIR/skills, else
 // ~/.claude/skills.
@@ -47,14 +46,24 @@ func (e Env) Root(local bool) string {
 	return filepath.Join(e.Home, ".claude", "skills")
 }
 
+// check refuses an environment the scope cannot use: a local plan needs the current folder, a global one the
+// home folder unless CLAUDE_CONFIG_DIR names Claude Code's.
+func (e Env) check(local bool) error {
+	switch {
+	case e.Getenv == nil:
+		return errors.New("skillinstall: incomplete environment")
+	case local && e.Cwd == "":
+		return errors.New("skillinstall: no current directory")
+	case !local && e.Home == "" && e.Getenv("CLAUDE_CONFIG_DIR") == "":
+		return errors.New("skillinstall: no home directory")
+	}
+	return nil
+}
+
 // Options choose what a plan covers.
 type Options struct {
-	// Skills names the skills to act on. Empty means every skill this build ships.
-	Skills []string
 	// Local plans the current project instead of the home directory.
 	Local bool
-	// Update only acts where the skill is already present; it never adds a copy.
-	Update bool
 	// Force replaces a copy that would be left alone, after moving it to a backup.
 	Force bool
 }
@@ -84,6 +93,34 @@ var ReasonText = map[string]string{
 	ReasonOther:      "A different skill uses this name",
 	ReasonUnreadable: "The folder can't be read",
 }
+
+// What a path holds, as Observed.Kind reports it.
+const (
+	holdsNothing    = "absent"
+	holdsLink       = "link"
+	holdsFolder     = "folder"
+	holdsFile       = "file"
+	holdsUnreadable = "unreadable"
+)
+
+// The states of a copy found on this machine, as Installed.State reports them.
+const (
+	StateCurrent    = "current"
+	StateOutdated   = "outdated"
+	StateEdited     = "edited"
+	StateOther      = "other"
+	StateLink       = "link"
+	StateUnreadable = "unreadable"
+	StateRemoved    = "removed"
+)
+
+// The statuses Execute reports.
+const (
+	StatusRan     = "ran"
+	StatusDone    = "done"
+	StatusChanged = "changed"
+	StatusFailed  = "failed"
+)
 
 // Op is one planned operation.
 type Op struct {
@@ -116,25 +153,16 @@ type Entry struct {
 	Ops    []Op   `json:"ops"`
 }
 
-// Plan is what install or update would do.
+// Plan is what install would do.
 type Plan struct {
 	Scope  string  `json:"scope"`
 	Root   string  `json:"root"`
 	Skills []Entry `json:"skills"`
-	// Digest identifies the plan; Execute runs only a plan whose paths still hold what it observed.
-	Digest string `json:"planDigest"`
 }
 
-// Make plans the install or update that opts describes.
+// Make plans the install that opts describes, for every skill this build ships.
 func Make(env Env, opts Options) (*Plan, error) {
-	if env.Home == "" || env.Getenv == nil {
-		return nil, errors.New("skillinstall: incomplete environment")
-	}
-	if opts.Local && env.Cwd == "" {
-		return nil, errors.New("skillinstall: no current directory")
-	}
-	chosen, err := chooseSkills(opts.Skills)
-	if err != nil {
+	if err := env.check(opts.Local); err != nil {
 		return nil, err
 	}
 	scope := "global"
@@ -142,74 +170,71 @@ func Make(env Env, opts Options) (*Plan, error) {
 		scope = "local"
 	}
 	p := &Plan{Scope: scope, Root: env.Root(opts.Local)}
-	for _, s := range chosen {
+	for _, s := range shipped() {
 		e := Entry{Name: s.Name, Digest: skills.Digest(s.Stub)}
-		op := classify(filepath.Join(p.Root, s.Name), s, opts)
-		if !opts.Update || op.Observed.Kind != "absent" {
-			e.Ops = append(e.Ops, op)
-		}
+		e.Ops = append(e.Ops, classify(filepath.Join(p.Root, s.Name), s, opts.Force))
 		p.Skills = append(p.Skills, e)
 	}
-	p.Digest = digest(p)
 	return p, nil
 }
 
 // releasedExtra adds digests to every skill's released list; tests use it to stage an older shipped stub.
 var releasedExtra []string
 
-func chooseSkills(names []string) ([]skills.Skill, error) {
+// shipped is every skill this build ships, with the stubs released before it.
+func shipped() []skills.Skill {
 	all := skills.All()
 	for i := range all {
 		all[i].Released = append(all[i].Released, releasedExtra...)
 	}
-	if len(names) == 0 {
-		return all, nil
-	}
-	var out []skills.Skill
-	for _, n := range names {
-		i := slices.IndexFunc(all, func(s skills.Skill) bool { return s.Name == n })
-		if i < 0 {
-			var have []string
-			for _, s := range all {
-				have = append(have, s.Name)
-			}
-			return nil, &headless.Refusal{Code: "invalid-args", Message: fmt.Sprintf("%q is not a skill this build ships", n),
-				Fix: "pass one of " + strings.Join(have, ", ")}
+	return all
+}
+
+// judge says what the copy of skill s at path is, from what observe found there: "" when there is none.
+// Install and uninstall both decide from it, so they never disagree about a folder.
+func judge(path string, o Observed, s skills.Skill) string {
+	switch o.Kind {
+	case holdsNothing:
+		return ""
+	case holdsLink:
+		return StateLink
+	case holdsFile:
+		return StateOther
+	case holdsFolder:
+		// Ours means SKILL.md alone, as a build wrote it. Anything beside it is the person's, so the folder is
+		// theirs to keep: uninstall removes only what this check calls ours.
+		ours := len(o.Entries) == 1 && o.Entries[0] == "SKILL.md" && slices.Contains(s.Released, o.Digest)
+		switch {
+		case ours && o.Digest == skills.Digest(s.Stub):
+			return StateCurrent
+		case ours:
+			return StateOutdated
+		case stubNameAt(path) == s.Name:
+			return StateEdited
 		}
-		if !slices.ContainsFunc(out, func(x skills.Skill) bool { return x.Name == n }) {
-			out = append(out, all[i])
-		}
+		return StateOther
 	}
-	return out, nil
+	return StateUnreadable
 }
 
 // classify decides what to do at path for skill s.
-func classify(path string, s skills.Skill, opts Options) Op {
+func classify(path string, s skills.Skill, force bool) Op {
 	op := Op{Path: path, Observed: observe(path)}
-	current := skills.Digest(s.Stub)
-	switch op.Observed.Kind {
-	case "absent":
+	switch judge(path, op.Observed, s) {
+	case "":
 		op.Kind = Write
-	case "folder":
-		ours := len(op.Observed.Entries) == 1 && op.Observed.Entries[0] == "SKILL.md" && slices.Contains(s.Released, op.Observed.Digest)
-		switch {
-		case ours && op.Observed.Digest == current:
-			op.Kind = Keep
-		case ours:
-			op.Kind = Update
-		default:
-			reason := ReasonOther
-			if len(op.Observed.Entries) == 1 && op.Observed.Entries[0] == "SKILL.md" && stubNameAt(path) == s.Name {
-				reason = ReasonEdited
-			}
-			op.Kind, op.Reason, op.Replaceable = Leave, reason, true
-		}
-	case "link", "file":
+	case StateCurrent:
+		op.Kind = Keep
+	case StateOutdated:
+		op.Kind = Update
+	case StateEdited:
+		op.Kind, op.Reason, op.Replaceable = Leave, ReasonEdited, true
+	case StateOther, StateLink:
 		op.Kind, op.Reason, op.Replaceable = Leave, ReasonOther, true
 	default:
 		op.Kind, op.Reason = Leave, ReasonUnreadable
 	}
-	if op.Kind == Leave && op.Replaceable && opts.Force {
+	if op.Kind == Leave && op.Replaceable && force {
 		op.Kind = Replace
 	}
 	return op
@@ -227,28 +252,29 @@ func stubNameAt(dir string) string {
 func observe(path string) Observed {
 	st, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Observed{Kind: "absent"}
+		return Observed{Kind: holdsNothing}
 	}
 	if err != nil {
-		return Observed{Kind: "unreadable"}
+		return Observed{Kind: holdsUnreadable}
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
 		t, err := os.Readlink(path)
 		if err != nil {
-			return Observed{Kind: "unreadable"}
+			return Observed{Kind: holdsUnreadable}
 		}
-		return Observed{Kind: "link", Target: t}
+		return Observed{Kind: holdsLink, Target: t}
 	}
 	if !st.IsDir() {
-		return Observed{Kind: "file"}
+		return Observed{Kind: holdsFile}
 	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return Observed{Kind: "unreadable"}
+		return Observed{Kind: holdsUnreadable}
 	}
-	o := Observed{Kind: "folder"}
+	o := Observed{Kind: holdsFolder}
 	for _, e := range entries {
-		if e.Name() == ".DS_Store" || e.Name() == "Thumbs.db" {
+		switch e.Name() {
+		case ".DS_Store", "Thumbs.db", tempName:
 			continue
 		}
 		o.Entries = append(o.Entries, e.Name())
@@ -258,12 +284,6 @@ func observe(path string) Observed {
 		o.Digest = skills.Digest(b)
 	}
 	return o
-}
-
-func digest(p *Plan) string {
-	b, _ := json.Marshal(p.Skills)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 // Outcome reports what Execute did for one skill.
@@ -279,9 +299,10 @@ type OpOutcome struct {
 	Path string `json:"path"`
 	Kind Kind   `json:"kind"`
 	// Status is done, changed or failed.
-	Status     string `json:"status"`
-	Reason     string `json:"reason,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+	Error  string `json:"error,omitempty"`
+	// BackupPath is where a replaced copy went. It is set on a failure too, whenever the copy is still there.
 	BackupPath string `json:"backupPath,omitempty"`
 }
 
@@ -289,7 +310,7 @@ type OpOutcome struct {
 func Failed(outs []Outcome) bool {
 	for _, o := range outs {
 		for _, op := range o.Ops {
-			if op.Status == "failed" || op.Status == "changed" {
+			if op.Status == StatusFailed || op.Status == StatusChanged {
 				return true
 			}
 		}
@@ -300,20 +321,24 @@ func Failed(outs []Outcome) bool {
 // Execute carries out a plan. Each path is observed again first; one that changed since the plan is left
 // untouched and reported.
 func Execute(env Env, p *Plan) []Outcome {
+	all := shipped()
 	var outs []Outcome
 	for _, e := range p.Skills {
-		chosen, _ := chooseSkills([]string{e.Name})
-		s := chosen[0]
-		out := Outcome{Name: e.Name, Status: "ran"}
+		i := slices.IndexFunc(all, func(s skills.Skill) bool { return s.Name == e.Name })
+		out := Outcome{Name: e.Name, Status: StatusRan}
 		for _, op := range e.Ops {
-			r := OpOutcome{Path: op.Path, Kind: op.Kind, Reason: op.Reason, Status: "done"}
-			if op.Kind != Keep && op.Kind != Leave {
-				if !equalObserved(observe(op.Path), op.Observed) {
-					r.Status, out.Status = "changed", "changed"
-				} else if bp, err := apply(env, p.Root, op, s); err != nil {
-					r.Status, r.Error = "failed", err.Error()
-				} else {
-					r.BackupPath = bp
+			r := OpOutcome{Path: op.Path, Kind: op.Kind, Reason: op.Reason, Status: StatusDone}
+			switch {
+			case op.Kind == Keep || op.Kind == Leave:
+			case i < 0:
+				r.Status, r.Error = StatusFailed, fmt.Sprintf("%q is not a skill this build ships", e.Name)
+			case !equalObserved(observe(op.Path), op.Observed):
+				r.Status, out.Status = StatusChanged, StatusChanged
+			default:
+				bp, err := apply(env, p.Root, op, all[i])
+				r.BackupPath = bp
+				if err != nil {
+					r.Status, r.Error = StatusFailed, err.Error()
 				}
 			}
 			out.Ops = append(out.Ops, r)
@@ -327,11 +352,16 @@ func equalObserved(a, b Observed) bool {
 	return a.Kind == b.Kind && a.Target == b.Target && a.Digest == b.Digest && slices.Equal(a.Entries, b.Entries)
 }
 
-// apply performs op and returns the backup path when it replaced a copy.
+// apply performs op. It returns where a replaced copy went: on success, the backup; on a failure, the backup
+// only if the copy could not be put back where it was.
 func apply(env Env, root string, op Op, s skills.Skill) (string, error) {
 	backup := ""
 	if op.Kind == Replace {
-		backup = filepath.Join(filepath.Dir(root), BackupFolder, filepath.Base(op.Path)+"-"+env.Now().UTC().Format("20060102T150405Z"))
+		now := env.Now
+		if now == nil {
+			now = time.Now
+		}
+		backup = filepath.Join(filepath.Dir(root), backupFolder, filepath.Base(op.Path)+"-"+now().UTC().Format("20060102T150405Z"))
 		if err := os.MkdirAll(filepath.Dir(backup), 0o755); err != nil {
 			return "", fmt.Errorf("creating the backup folder: %w", err)
 		}
@@ -339,18 +369,43 @@ func apply(env Env, root string, op Op, s skills.Skill) (string, error) {
 			return "", fmt.Errorf("moving the old copy to %s: %w", backup, err)
 		}
 	}
-	if err := os.MkdirAll(op.Path, 0o755); err != nil {
-		return "", fmt.Errorf("creating %s: %w", op.Path, err)
+	err := writeCopy(op.Path, s.Stub)
+	if err == nil || backup == "" {
+		return backup, err
 	}
-	// Write beside, then rename, so a reader never sees a half-written stub.
-	tmp := filepath.Join(op.Path, ".SKILL.md.tmp")
-	if err := os.WriteFile(tmp, s.Stub, 0o644); err != nil {
-		return "", fmt.Errorf("writing %s: %w", tmp, err)
+	// Put the replaced copy back, so a failed --force leaves the folder as it found it.
+	if rerr := os.RemoveAll(op.Path); rerr == nil {
+		if rerr = os.Rename(backup, op.Path); rerr == nil {
+			return "", fmt.Errorf("%w; the copy that was there is back in place", err)
+		}
 	}
-	if err := os.Rename(tmp, filepath.Join(op.Path, "SKILL.md")); err != nil {
-		return "", fmt.Errorf("writing SKILL.md: %w", err)
+	return backup, fmt.Errorf("%w; the copy that was there is in %s", err, backup)
+}
+
+// writeStub writes a file; tests swap it to make a write fail.
+var writeStub = os.WriteFile
+
+// writeCopy puts stub in dir as SKILL.md. It writes beside, then renames, so a reader never sees half a stub,
+// and a write that fails leaves no temporary file behind.
+func writeCopy(dir string, stub []byte) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
 	}
-	return backup, nil
+	tmp := filepath.Join(dir, tempName)
+	if err := writeStub(tmp, stub, 0o644); err != nil {
+		return errors.Join(fmt.Errorf("writing %s: %w", tmp, err), removeIfThere(tmp))
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, "SKILL.md")); err != nil {
+		return errors.Join(fmt.Errorf("writing SKILL.md: %w", err), removeIfThere(tmp))
+	}
+	return nil
+}
+
+func removeIfThere(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removing %s: %w", path, err)
+	}
+	return nil
 }
 
 // Installed describes a copy of a skill found on this machine.
@@ -362,67 +417,35 @@ type Installed struct {
 	State string `json:"state"`
 }
 
-// Scan lists the copy of each skill at the root, when there is one.
-func Scan(env Env, local bool) ([]Installed, error) {
-	if env.Home == "" || env.Getenv == nil {
-		return nil, errors.New("skillinstall: incomplete environment")
+// scan lists the copy of each skill at the root, when there is one.
+func scan(env Env, local bool) ([]Installed, error) {
+	if err := env.check(local); err != nil {
+		return nil, err
 	}
-	all, _ := chooseSkills(nil)
 	var out []Installed
-	for _, s := range all {
+	for _, s := range shipped() {
 		path := filepath.Join(env.Root(local), s.Name)
-		if st := state(path, s); st != "" {
+		if st := judge(path, observe(path), s); st != "" {
 			out = append(out, Installed{Name: s.Name, Path: path, State: st})
 		}
 	}
 	return out, nil
 }
 
-func state(path string, s skills.Skill) string {
-	o := observe(path)
-	switch o.Kind {
-	case "absent":
-		return ""
-	case "link":
-		return "link"
-	case "folder":
-		ours := len(o.Entries) == 1 && o.Entries[0] == "SKILL.md" && slices.Contains(s.Released, o.Digest)
-		switch {
-		case ours && o.Digest == skills.Digest(s.Stub):
-			return "current"
-		case ours:
-			return "outdated"
-		case stubNameAt(path) == s.Name:
-			return "edited"
-		}
-		return "other"
-	case "file":
-		return "other"
-	}
-	return "unreadable"
-}
-
 // Remove takes out the copies install wrote: untouched copies of ours. Anything else is left and reported
 // with its state.
 func Remove(env Env, opts Options) ([]Installed, error) {
-	found, err := Scan(env, opts.Local)
-	if err != nil {
-		return nil, err
-	}
-	chosen, err := chooseSkills(opts.Skills)
+	found, err := scan(env, opts.Local)
 	if err != nil {
 		return nil, err
 	}
 	var out []Installed
 	for _, f := range found {
-		if !slices.ContainsFunc(chosen, func(s skills.Skill) bool { return s.Name == f.Name }) {
-			continue
-		}
-		if f.State == "current" || f.State == "outdated" {
+		if f.State == StateCurrent || f.State == StateOutdated {
 			if err := os.RemoveAll(f.Path); err != nil {
 				return out, fmt.Errorf("removing %s: %w", f.Path, err)
 			}
-			f.State = "removed"
+			f.State = StateRemoved
 		}
 		out = append(out, f)
 	}

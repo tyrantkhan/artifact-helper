@@ -800,9 +800,9 @@ func summarize(plan *skillinstall.Plan, outs []skillinstall.Outcome) string {
 				status = outs[i].Ops[j].Status
 			}
 			switch {
-			case status == "failed":
+			case status == skillinstall.StatusFailed:
 				counts["failed"]++
-			case status == "changed":
+			case status == skillinstall.StatusChanged:
 				counts["changed meanwhile"]++
 			case op.Kind == skillinstall.Leave:
 				counts["left alone"]++
@@ -842,19 +842,25 @@ type exitError struct{ code int }
 
 func (e *exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
-func skillsEnv(env *Env) (skillinstall.Env, error) {
+// skillsEnv is how install and uninstall see the machine. Each scope looks up only what it uses: a local one
+// the current folder, a global one the home folder (unless CLAUDE_CONFIG_DIR names Claude Code's).
+func skillsEnv(env *Env, local bool) (skillinstall.Env, error) {
 	if env.Skills != nil {
 		return *env.Skills, nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return skillinstall.Env{}, fmt.Errorf("finding the home directory: %w", err)
+	e := skillinstall.Env{Getenv: env.Getenv, Now: time.Now}
+	var err error
+	switch {
+	case local:
+		if e.Cwd, err = os.Getwd(); err != nil {
+			return e, fmt.Errorf("finding the current directory: %w", err)
+		}
+	case env.Getenv("CLAUDE_CONFIG_DIR") == "":
+		if e.Home, err = os.UserHomeDir(); err != nil {
+			return e, fmt.Errorf("finding the home directory: %w", err)
+		}
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return skillinstall.Env{}, fmt.Errorf("finding the current directory: %w", err)
-	}
-	return skillinstall.Env{Home: home, Cwd: cwd, Getenv: env.Getenv, Now: time.Now}, nil
+	return e, nil
 }
 
 const installHelp = `Usage: artifact-helper install [--local] [--force] [--dry-run]
@@ -870,7 +876,7 @@ skills folder. --local installs into the current project's .claude/skills instea
 without writing.
 
 Result:
-  {"ok": true, "command": "install", "plan": {"scope": "global", "root": "/home/me/.claude/skills", "planDigest": "...",
+  {"ok": true, "command": "install", "plan": {"scope": "global", "root": "/home/me/.claude/skills",
      "skills": [{"name": "artifact-helper", "digest": "...", "ops": [{"kind": "write", "path": "/home/me/.claude/skills/artifact-helper"}]}]},
    "outcomes": [{"name": "artifact-helper", "status": "ran", "ops": [{"path": "...", "kind": "write", "status": "done"}]}],
    "summary": "artifact-helper: 1 written"}
@@ -898,7 +904,7 @@ func cmdInstall(env *Env, args []string) error {
 	} else if len(pos) > 0 {
 		return badArgs("install", "install takes no arguments")
 	}
-	senv, err := skillsEnv(env)
+	senv, err := skillsEnv(env, opts.Local)
 	if err != nil {
 		return err
 	}
@@ -928,7 +934,7 @@ func cmdUninstall(env *Env, args []string) error {
 	} else if len(pos) > 0 {
 		return badArgs("uninstall", "uninstall takes no arguments")
 	}
-	senv, err := skillsEnv(env)
+	senv, err := skillsEnv(env, opts.Local)
 	if err != nil {
 		return err
 	}
