@@ -106,7 +106,9 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	readOK := `{"type":"result","subtype":"success","num_turns":2,"structured_output":{"path":"index.html","error":""}}`
 	listing := `{"type":"result","subtype":"success","structured_output":{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Typo","resolved":false,"activated":true,"replies":[]}],"raw":"1 thread","more_cursor":"","error":""}}`
 	threadOK := `{"type":"result","subtype":"success","structured_output":{"replied":true,"resolved":true,"message":"posted","error":""}}`
-	bin := fakeClaude(t, map[string]string{"read": readOK, "publish": linkOK, "comments": listing, "reply": threadOK, "resolve": threadOK},
+	files := `{"type":"result","subtype":"success","structured_output":{"files":["assets/app.js"],"version":"v1","raw":"Published files","error":""}}`
+	artifacts := `{"type":"result","subtype":"success","structured_output":{"artifacts":[{"title":"Q3","url":"` + link + `","updated":"2026-11-01","owner":"mine"}],"total":21,"raw":"Showing 1 of 21","error":""}}`
+	bin := fakeClaude(t, map[string]string{"read": readOK, "publish": linkOK, "comments": listing, "reply": threadOK, "resolve": threadOK, "files": files, "list": artifacts},
 		`[ -e "$PWD/index.html" ] || printf '<h1>Hello</h1>' > "$PWD/index.html"`)
 	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	out := t.TempDir()
@@ -115,6 +117,25 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	res := result(t, o)
 	saved := filepath.Join(out, "index.html")
 	if code != 0 || res["command"] != "read" || res["savedPath"] != saved || res["path"] != "index.html" {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+
+	code, o, _ = run(t, env, "", "read", link, "--list")
+	res = result(t, o)
+	if code != 0 || res["command"] != "read" || len(res["files"].([]any)) != 1 || res["version"] != "v1" {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+	code, o, _ = run(t, env, "", "read", link, "--list", "--out", out)
+	if code != 1 || result(t, o)["error"].(map[string]any)["code"] != "invalid-args" {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+	code, o, _ = run(t, env, "", "list", "--scope", "all", "--limit", "5")
+	res = result(t, o)
+	if code != 0 || res["scope"] != "all" || len(res["artifacts"].([]any)) != 1 || res["total"] != 21.0 {
+		t.Fatalf("exit %d: %s", code, o)
+	}
+	code, o, _ = run(t, env, "", "list", "extra")
+	if code != 1 || result(t, o)["error"].(map[string]any)["code"] != "invalid-args" {
 		t.Fatalf("exit %d: %s", code, o)
 	}
 

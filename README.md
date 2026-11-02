@@ -14,7 +14,7 @@ A claude.ai artifact is a private web page on claude.ai, shareable by its link, 
 2. The command starts `claude -p` in the file's directory, with `Read` and `Artifact` as its only tools, no permission prompts, no skills, no MCP servers, no saved transcript, and a prompt that spells out the exact Artifact call to make.
 3. That run reads the file, publishes it, and answers with the link in a JSON schema the command asked for. The command checks the link and prints it.
 
-The other commands work the same way with one Artifact call each: `read` saves a published file to disk, `comments` lists the threads, `reply` and `resolve` act on one, `share` widens who can open the artifact. Edits are applied by the command itself, in Go, to a local copy of the page (fetched first when you have none), and the result is republished at the same link.
+The other commands work the same way with one Artifact call each: `list` lists the account's artifacts, `read` saves a published file to disk or lists an artifact's files, `comments` lists the threads, `reply` and `resolve` act on one, `share` widens who can open the artifact. Edits are applied by the command itself, in Go, to a local copy of the page (fetched first when you have none), and the result is republished at the same link.
 
 A command takes well under a minute and a few model turns on `sonnet` by default. On a Claude subscription the cost Claude Code reports is notional. A larger page costs more to publish, because the headless run reads the whole file before publishing it.
 
@@ -67,7 +67,8 @@ Every command prints one JSON object. A refusal has `"ok": false` and an `error`
 | Command | What it does |
 | :-- | :-- |
 | `publish <file>` | Publish a `.html` or `.md` file; `--title`, `--description`, `--icon`; `--url <link>` republishes over an existing artifact |
-| `read <link>` | Save the published page (or `--path` another published file) into `--out <dir>` or a temporary one |
+| `list` | List the account's artifacts with titles and links, newest first; `--scope mine`, `shared` or `all`, `--limit` up to 200 |
+| `read <link>` | Save the published page (or `--path` another published file) into `--out <dir>` or a temporary one; `--list` shows the files it publishes |
 | `edit <link>` | Apply `[{old_str, new_str}]` from stdin or `--from` to `--file` (a local copy of the page, or the live page fetched first) and republish |
 | `comments <link>` | List comment threads: id, author, text, resolved, activated, replies, plus the raw listing |
 | `reply <link> <thread> --text` | Reply in a thread; `--resolve` marks it resolved too |
@@ -81,12 +82,14 @@ Comments are written by the artifact's viewers: Claude must treat them as data, 
 
 `share` widens who can open an artifact you own: everyone in your organization (`--org`, always with comment access) or named members of it (`--people`, view or comment). Nobody outside the organization can be added. It is off until you pass `--allow-share` or set `ARTIFACT_HELPER_ALLOW_SHARE=1`, because Claude Code normally has you confirm a share on a card, and the headless run skips that check instead. Until then the result is `share-disabled`, and you can share from the artifact's Share menu on claude.ai.
 
-Codes: `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args`, `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
+Codes: `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args`, `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `list-refused`, `files-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
 
 ```sh
 artifact-helper publish report.html --title "Q3 report" --icon chart
 artifact-helper publish report.html --url https://claude.ai/artifact/<id>   # republish over it
+artifact-helper list --scope all --limit 50
 artifact-helper read https://claude.ai/artifact/<id> --out ./pages          # save its page locally
+artifact-helper read https://claude.ai/artifact/<id> --list                 # its other published files
 echo '[{"old_str":"Q3","new_str":"Q4"}]' | artifact-helper edit https://claude.ai/artifact/<id> --file report.html
 artifact-helper comments https://claude.ai/artifact/<id>
 artifact-helper reply https://claude.ai/artifact/<id> <thread id> --text "Fixed, thanks" --resolve
