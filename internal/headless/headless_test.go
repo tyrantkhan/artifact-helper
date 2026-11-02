@@ -701,7 +701,7 @@ func TestConfigDir(t *testing.T) {
 
 func TestInstallPlugin(t *testing.T) {
 	other := t.TempDir()
-	install := func(plugins map[string]string) (already bool, err error, calls []string, env []string) {
+	install := func(plugins map[string]string) (already bool, calls, env []string, err error) {
 		t.Helper()
 		dir := t.TempDir()
 		record, envRecord := filepath.Join(dir, "record"), filepath.Join(dir, "env")
@@ -712,10 +712,10 @@ func TestInstallPlugin(t *testing.T) {
 			calls = append(calls, strings.Join(r[2:], " "))
 		}
 		data, _ := os.ReadFile(envRecord)
-		return already, err, calls, strings.Split(strings.TrimSpace(string(data)), "\n")
+		return already, calls, strings.Split(strings.TrimSpace(string(data)), "\n"), err
 	}
 	const add, inst = "marketplace add tyrantkhan/artifact-helper", "install artifact-helper@artifact-helper"
-	already, err, calls, env := install(map[string]string{"list --json": "[]", "marketplace list --json": "[]", add: "", inst: ""})
+	already, calls, env, err := install(map[string]string{"list --json": "[]", "marketplace list --json": "[]", add: "", inst: ""})
 	if err != nil || already || strings.Join(calls, "|") != "list --json|marketplace list --json|"+add+"|"+inst {
 		t.Fatalf("already=%v err=%v calls=%q", already, err, calls)
 	}
@@ -724,20 +724,43 @@ func TestInstallPlugin(t *testing.T) {
 			t.Fatalf("a plugin command ran with %s", e)
 		}
 	}
-	already, err, calls, _ = install(map[string]string{"list --json": `[{"id": "artifact-helper@artifact-helper"}]`})
+	already, calls, _, err = install(map[string]string{"list --json": `[{"id": "artifact-helper@artifact-helper"}]`})
 	if err != nil || !already || len(calls) != 1 {
 		t.Fatalf("already=%v err=%v calls=%q", already, err, calls)
 	}
-	_, err, calls, _ = install(map[string]string{"list --json": "[]", "marketplace list --json": `[{"name": "artifact-helper"}]`, inst: ""})
+	_, calls, _, err = install(map[string]string{"list --json": "[]", "marketplace list --json": `[{"name": "artifact-helper"}]`, inst: ""})
 	if err != nil || strings.Join(calls, "|") != "list --json|marketplace list --json|"+inst {
 		t.Fatalf("err=%v calls=%q", err, calls)
 	}
-	_, err, _, _ = install(map[string]string{"list --json": "[]", "marketplace list --json": "[]", add: ""})
+	_, _, _, err = install(map[string]string{"list --json": "[]", "marketplace list --json": "[]", add: ""})
 	if rf := wantRefusal(t, err, "plugin-failed"); !strings.Contains(rf.Message, inst) {
 		t.Fatalf("message = %q", rf.Message)
 	}
-	_, err, _, _ = install(map[string]string{"list --json": "not json"})
+	_, _, _, err = install(map[string]string{"list --json": "not json"})
 	wantRefusal(t, err, "plugin-failed")
+	// Each command can fail: the list itself, the marketplace list, the marketplace add.
+	for _, plugins := range []map[string]string{{}, {"list --json": "[]"}, {"list --json": "[]", "marketplace list --json": "[]"}} {
+		_, _, _, err = install(plugins)
+		wantRefusal(t, err, "plugin-failed")
+	}
+	if _, err := InstallPlugin(context.Background(), Options{Claude: filepath.Join(t.TempDir(), "no-such-claude")}); err == nil {
+		t.Fatal("a missing claude installed the plugin")
+	}
+}
+
+func TestInheritedConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	if got := InheritedConfigDir([]string{"HOME=/h", "CLAUDE_CONFIG_DIR=" + dir}); got != dir {
+		t.Fatalf("inherited %q", got)
+	}
+	if got := InheritedConfigDir([]string{"HOME=/h", "NOT_A_PAIR"}); got != "" {
+		t.Fatalf("inherited %q from an environment without it", got)
+	}
+	// With no environment given, it is this process's.
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	if got := (Options{}).claudeConfigDir(); got != dir {
+		t.Fatalf("config dir %q", got)
+	}
 }
 
 func TestValidURL(t *testing.T) {

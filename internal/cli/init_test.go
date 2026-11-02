@@ -3,12 +3,15 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tyrantkhan/artifact-helper/internal/fakeclaude"
+	"github.com/tyrantkhan/artifact-helper/internal/headless"
 	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
 )
 
@@ -23,6 +26,8 @@ type machine struct {
 	terminal bool
 	// skills keeps install and uninstall away from the real skills folder, should the gate ever let them run.
 	skills *skillinstall.Env
+	// stdin, when set, replaces the string a run is given.
+	stdin io.Reader
 }
 
 func newMachine(t *testing.T, spec fakeclaude.Spec) *machine {
@@ -55,7 +60,11 @@ func (m *machine) run(stdin string, args ...string) (code int, stdout, stderr st
 		}
 		return ""
 	}
-	e := &Env{Args: args, Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errb, Getenv: getenv, Skills: m.skills,
+	var in io.Reader = strings.NewReader(stdin)
+	if m.stdin != nil {
+		in = m.stdin
+	}
+	e := &Env{Args: args, Stdin: in, Stdout: &out, Stderr: &errb, Getenv: getenv, Skills: m.skills,
 		Environ: func() []string { return m.environ }, Config: m.config, Terminal: func(any) bool { return m.terminal }}
 	return Main(e), out.String(), errb.String()
 }
@@ -370,5 +379,198 @@ func TestInitInstallsThePluginWhateverTheFolderLogin(t *testing.T) {
 	code, out, _ := m.run("", "init", "--plugin")
 	if code != 0 || result(t, out)["plugin"] != "already-installed" || result(t, out)["saved"] != false {
 		t.Fatalf("code=%d out=%s", code, out)
+	}
+}
+
+// brokenInput gives its lines, then fails as a terminal that went away would.
+type brokenInput struct{ lines string }
+
+func (b *brokenInput) Read(p []byte) (int, error) {
+	if b.lines == "" {
+		return 0, errors.New("terminal gone")
+	}
+	n := copy(p, b.lines)
+	b.lines = b.lines[n:]
+	return n, nil
+}
+
+func TestConfigFileTrouble(t *testing.T) {
+	if p, err := configPath(&Env{}); err != nil || filepath.Base(p) != "config.json" || filepath.Base(filepath.Dir(p)) != "artifact-helper" {
+		t.Fatalf("default path %q, %v", p, err)
+	}
+	dir := t.TempDir()
+	// A folder where the file belongs can be neither read nor written.
+	if _, err := loadConfig(dir); err == nil || refusalOf(err) != "invalid-config" {
+		t.Fatalf("loading a folder: %v", err)
+	}
+	if err := saveConfig(dir, config{ClaudeConfigDir: "default"}); err == nil {
+		t.Fatal("saved over a folder")
+	}
+	// A file where a folder belongs cannot hold one.
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveConfig(filepath.Join(file, "artifact-helper", "config.json"), config{ClaudeConfigDir: "default"}); err == nil {
+		t.Fatal("saved under a file")
+	}
+	// options takes the environment alone without a config, and refuses a damaged one.
+	e := &Env{Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Config: filepath.Join(dir, "none.json")}
+	if o, err := options(e); err != nil || o.Organization != "" || o.ConfigDir != "" {
+		t.Fatalf("options = %+v, %v", o, err)
+	}
+	e.Config = dir
+	if _, err := options(e); refusalOf(err) != "invalid-config" {
+		t.Fatalf("options on a damaged config: %v", err)
+	}
+	// Without a home there is no user config folder, and every command says so.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("AppData", "")
+	e.Config = ""
+	if _, err := options(e); err == nil {
+		t.Fatal("found a config folder without a home")
+	}
+	for _, args := range [][]string{{"doctor"}, {"init"}} {
+		var out, errb bytes.Buffer
+		e := &Env{Args: args, Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errb,
+			Getenv: func(string) string { return "" }, Environ: func() []string { return nil }}
+		if code := Main(e); code != 1 || refusalCode(t, out.String()) != "error" || !strings.Contains(errb.String(), "user config folder") {
+			t.Errorf("%v: code=%d out=%s err=%s", args, code, out.String(), errb.String())
+		}
+	}
+}
+
+func refusalOf(err error) string {
+	if rf, ok := headless.IsRefusal(err); ok {
+		return rf.Code
+	}
+	return ""
+}
+
+func TestLoginAccount(t *testing.T) {
+	for l, want := range map[login]string{
+		{}: "not signed in",
+		{LoggedIn: true, Email: "a@x", Organization: "Org"}: "a@x in Org",
+		{LoggedIn: true, Email: "a@x"}:                      "a@x, no organization",
+		{LoggedIn: true, Organization: "Org"}:               "Org",
+		{LoggedIn: true, AuthMethod: "oauth_token"}:         "an account claude does not name (oauth_token)",
+	} {
+		if got := l.account(); got != want {
+			t.Errorf("%+v: %q, want %q", l, got, want)
+		}
+	}
+}
+
+func TestInitRefusals(t *testing.T) {
+	m := newMachine(t, fakeclaude.Spec{})
+	if code, out, _ := m.run("", "init", "extra"); code != 1 || refusalCode(t, out) != "invalid-args" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	if code, out, _ := m.run("", "publish", "--", "--help"); code != 1 || refusalCode(t, out) != "not-initialized" {
+		t.Fatalf("-- did not end the flags: code=%d out=%s", code, out)
+	}
+	// A claude that cannot run stops init before there are any logins to show.
+	m.getenv["ARTIFACT_HELPER_CLAUDE"] = filepath.Join(t.TempDir(), "no-such-claude")
+	if code, out, _ := m.run("", "init"); code != 1 || refusalCode(t, out) != "no-claude" || strings.Contains(out, "logins") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// A config that cannot be written is an error after the logins, which the result still carries.
+	m = newMachine(t, fakeclaude.Spec{})
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m.config = filepath.Join(file, "config.json")
+	code, out, errs := m.run("", "init", "--save")
+	if r := result(t, out); code != 1 || refusalCode(t, out) != "error" || r["saved"] != false || r["logins"] == nil || errs == "" {
+		t.Fatalf("code=%d out=%s err=%s", code, out, errs)
+	}
+	m.terminal = true
+	if code, out, _ = m.run("", "init", "--save"); code != 1 || !strings.Contains(out, "x not saved") || !strings.Contains(out, "creating") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+}
+
+func TestInitInATerminalShowsEveryCase(t *testing.T) {
+	inTerminal := func(spec fakeclaude.Spec) *machine {
+		m := newMachine(t, spec)
+		m.terminal = true
+		return m
+	}
+	// The plugin rows, installed and already there.
+	plugins := map[string]string{"list --json": "[]", "marketplace list --json": `[{"name": "artifact-helper"}]`, "install artifact-helper@artifact-helper": ""}
+	if code, out, _ := inTerminal(fakeclaude.Spec{Plugin: plugins}).run("\ny\n", "init"); code != 0 || !strings.Contains(out, "+ plugin        artifact-helper@artifact-helper installed") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	already := map[string]string{"list --json": `[{"id": "artifact-helper@artifact-helper"}]`}
+	if code, out, _ := inTerminal(fakeclaude.Spec{Plugin: already}).run("", "init", "--save", "--plugin"); code != 0 || !strings.Contains(out, "was already installed") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// A login without an organization, and an inherited folder init cannot use.
+	m := inTerminal(fakeclaude.Spec{Auth: `{"loggedIn": true, "authMethod": "oauth_token"}`})
+	m.environ = append(m.environ, "CLAUDE_CONFIG_DIR=relative/dir")
+	if code, out, _ := m.run("n\n", "init"); code != 0 || !strings.Contains(out, "is not an absolute path") || !strings.Contains(out, "names no organization") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// Two folders: an empty pick takes the first, and input that ends at the pick saves nothing.
+	m = inTerminal(fakeclaude.Spec{})
+	m.environ = append(m.environ, "CLAUDE_CONFIG_DIR="+t.TempDir())
+	if code, out, _ := m.run("\n\nn\n", "init"); code != 0 || m.saved(t).ClaudeConfigDir != "default" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	m = inTerminal(fakeclaude.Spec{})
+	m.environ = append(m.environ, "CLAUDE_CONFIG_DIR="+t.TempDir())
+	if code, out, _ := m.run("", "init"); code != 1 || !strings.Contains(out, "input ended") || m.saved(t) != nil {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// A terminal that fails mid-answer stops init, before or after the save.
+	m = inTerminal(fakeclaude.Spec{})
+	m.stdin = &brokenInput{}
+	if code, out, _ := m.run("", "init"); code != 1 || !strings.Contains(out, "terminal gone") || m.saved(t) != nil {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	m = inTerminal(fakeclaude.Spec{})
+	m.stdin = &brokenInput{lines: "\n"}
+	if code, out, _ := m.run("", "init"); code != 1 || !strings.Contains(out, "terminal gone") || m.saved(t) == nil {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// Declined, in color.
+	m = inTerminal(fakeclaude.Spec{})
+	delete(m.getenv, "NO_COLOR")
+	m.getenv["TERM"] = "xterm"
+	if code, out, _ := m.run("n\n", "init"); code != 0 || !strings.Contains(out, "✗") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+func TestDoctorInATerminalShowsEveryRow(t *testing.T) {
+	m := newMachine(t, fakeclaude.Spec{Auth: `{"loggedIn": false}`})
+	if err := saveConfig(m.config, config{Organization: "Example Inc", ClaudeConfigDir: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	m.terminal = true
+	code, out, _ := m.run("", "doctor")
+	if code != 1 || !strings.Contains(out, "x signed in     no") || !strings.Contains(out, "Example Inc required (not checked)") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	m = newMachine(t, fakeclaude.Spec{})
+	if err := saveConfig(m.config, config{ClaudeConfigDir: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	m.terminal = true
+	if code, out, _ = m.run("", "doctor"); code != 0 || !strings.Contains(out, "organization  not checked") {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+}
+
+func TestARegularFileIsNoTerminal(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if isTerminal(&Env{}, f) || isTerminal(&Env{}, strings.NewReader("")) {
+		t.Fatal("a file or a reader passed for a terminal")
 	}
 }
