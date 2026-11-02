@@ -43,6 +43,9 @@ type Spec struct {
 	// when the variable is not in its environment.
 	EnvRecord string
 	EnvName   string
+	// Plugin holds the stdout of each claude plugin command, keyed by its arguments after "plugin" joined with
+	// spaces, such as "list --json". A command not listed exits 1.
+	Plugin map[string]string
 }
 
 // Main answers as the fake claude and exits when the running binary is a copy Install made; otherwise it
@@ -96,6 +99,14 @@ func (s Spec) run(args []string) (int, error) {
 		case "auth":
 			fmt.Println(s.Auth)
 			return s.InfoCode, nil
+		case "plugin":
+			out, ok := s.Plugin[strings.Join(args[1:], " ")]
+			if !ok {
+				fmt.Fprintln(os.Stderr, "fakeclaude: no answer for plugin", strings.Join(args[1:], " "))
+				return 1, nil
+			}
+			fmt.Println(out)
+			return 0, nil
 		}
 	}
 	// claude -p offers no Artifact tool unless CLAUDE_CODE_ARTIFACT is on, so neither does the fake.

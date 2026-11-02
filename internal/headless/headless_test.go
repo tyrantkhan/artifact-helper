@@ -699,6 +699,47 @@ func TestConfigDir(t *testing.T) {
 	}
 }
 
+func TestInstallPlugin(t *testing.T) {
+	other := t.TempDir()
+	install := func(plugins map[string]string) (already bool, err error, calls []string, env []string) {
+		t.Helper()
+		dir := t.TempDir()
+		record, envRecord := filepath.Join(dir, "record"), filepath.Join(dir, "env")
+		bin := fakeclaude.Install(t, fakeclaude.Spec{Record: record, Plugin: plugins, EnvRecord: envRecord, EnvName: "CLAUDE_CONFIG_DIR"})
+		// The plugin goes to the Claude Code that runs this tool, so ConfigDir does not apply to it.
+		already, err = InstallPlugin(context.Background(), Options{Claude: bin, Environ: []string{"CLAUDE_CONFIG_DIR=" + other}, ConfigDir: ConfigDirDefault})
+		for _, r := range fakeclaude.Runs(t, record) {
+			calls = append(calls, strings.Join(r[2:], " "))
+		}
+		data, _ := os.ReadFile(envRecord)
+		return already, err, calls, strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	const add, inst = "marketplace add tyrantkhan/artifact-helper", "install artifact-helper@artifact-helper"
+	already, err, calls, env := install(map[string]string{"list --json": "[]", "marketplace list --json": "[]", add: "", inst: ""})
+	if err != nil || already || strings.Join(calls, "|") != "list --json|marketplace list --json|"+add+"|"+inst {
+		t.Fatalf("already=%v err=%v calls=%q", already, err, calls)
+	}
+	for _, e := range env {
+		if e != "CLAUDE_CONFIG_DIR="+other {
+			t.Fatalf("a plugin command ran with %s", e)
+		}
+	}
+	already, err, calls, _ = install(map[string]string{"list --json": `[{"id": "artifact-helper@artifact-helper"}]`})
+	if err != nil || !already || len(calls) != 1 {
+		t.Fatalf("already=%v err=%v calls=%q", already, err, calls)
+	}
+	_, err, calls, _ = install(map[string]string{"list --json": "[]", "marketplace list --json": `[{"name": "artifact-helper"}]`, inst: ""})
+	if err != nil || strings.Join(calls, "|") != "list --json|marketplace list --json|"+inst {
+		t.Fatalf("err=%v calls=%q", err, calls)
+	}
+	_, err, _, _ = install(map[string]string{"list --json": "[]", "marketplace list --json": "[]", add: ""})
+	if rf := wantRefusal(t, err, "plugin-failed"); !strings.Contains(rf.Message, inst) {
+		t.Fatalf("message = %q", rf.Message)
+	}
+	_, err, _, _ = install(map[string]string{"list --json": "not json"})
+	wantRefusal(t, err, "plugin-failed")
+}
+
 func TestValidURL(t *testing.T) {
 	for s, want := range map[string]bool{
 		"https://claude.ai/artifact/Abc_12-3": true, "https://claude.ai/code/artifact/0f1e2d3c": true,

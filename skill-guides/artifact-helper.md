@@ -4,6 +4,7 @@ A claude.ai artifact is a private web page hosted on claude.ai that the human op
 
 | Command | Does |
 | :-- | :-- |
+| `artifact-helper init [--save] [--claude-config-dir default\|<path>] [--plugin]` | Set up this machine once: which Claude account to use, and optionally the plugin |
 | `artifact-helper publish <file> [--title] [--description] [--icon] [--url <link>]` | Publish a `.html` (or `.md`) file; with `--url`, republish over an existing artifact |
 | `artifact-helper list [--scope mine\|shared\|all] [--limit n]` | List the human's artifacts, newest first, with their links |
 | `artifact-helper read <link> [--out <dir>] [--path <published path>]` | Save the published page (or another published file) to a local file |
@@ -28,7 +29,16 @@ Every command prints one JSON object; a refusal has `"ok": false` and an `error`
 
 ## 1. Check the setup once
 
-If a command fails with `no-claude` or `not-logged-in`, run `artifact-helper doctor` and give the human its `fix`: install Claude Code, or run `claude auth login`. Do not retry until they have.
+Every command but `get-skill` and `init` refuses with `not-initialized` until this machine is set up. When one does:
+
+1. Run `artifact-helper init`. It saves nothing. It lists the Claude accounts `claude` can run as in `logins`: with its own config folder (`default`), and with the `CLAUDE_CONFIG_DIR` this session sets, when it sets one.
+2. Show the human each login's folder and account. A login with `"loggedIn": false` cannot be saved until they sign in there. When `unusableConfigDir` is set, tell them that folder cannot be used because it is not an absolute path. Ask which folder to use.
+3. With their yes, run `artifact-helper init --save --claude-config-dir <folder>`, with the folder they picked: `default` or its path. Always pass the folder, so nothing else decides it. You MUST NOT pass `--save` without their yes, because it decides which account every later command publishes as.
+4. You MUST NOT pass `--plugin` unless the human said yes to installing the Claude Code plugin.
+
+Then run the command that refused again. A human at a terminal can instead run `artifact-helper init` themselves, which asks them each question.
+
+If a command fails with `no-claude` or `not-logged-in`, give the human its `fix`: install Claude Code, or run `claude auth login`. Do not retry until they have. Before the machine is set up, `init` gives these refusals itself; `doctor` needs `init` like every other command.
 
 If it fails with `wrong-organization`, this machine is signed in to a different Claude organization than the one this install is meant to publish from; the message names both. Tell the human, and do not sign in, sign out, or change `ARTIFACT_HELPER_ORGANIZATION` or `ARTIFACT_HELPER_CLAUDE_CONFIG_DIR` yourself.
 
@@ -72,3 +82,5 @@ Act on the error's `code` and `message`:
 - A code ending in `-refused`, such as `publish-refused` or `thread-refused`: the Artifact tool turned the call down. You MUST NOT retry it unchanged. Tell the human what the `message` says.
 - `invalid-args`, `invalid-file`, `invalid-url`, `invalid-thread` or `invalid-input`: fix the input as `fix` says, then run it again.
 - `organization-unverifiable` or `invalid-env`: the install's own settings are the problem. Tell the human, and do not change them yourself.
+- `not-initialized`: set the machine up as step 1 says. `invalid-config`: the saved setup is damaged; run step 1 again.
+- `plugin-failed`: `init --plugin` could not install the plugin. The result's `saved` says whether the setup was saved. Give the human the `message`.

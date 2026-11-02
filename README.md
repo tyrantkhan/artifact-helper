@@ -41,14 +41,17 @@ You also need [Claude Code](https://claude.com/claude-code) signed in to a Claud
 
 ```sh
 claude auth login          # once, on this machine
+artifact-helper init       # once: pick the Claude account to use, optionally install the plugin
 artifact-helper doctor     # shows the binary, the login and who is signed in
 ```
+
+Every command but `help`, `--version`, `get-skill` and `init` refuses with `not-initialized` until `init` has saved its setup. `init` finds the account `claude` runs as with its own config folder, and with the `CLAUDE_CONFIG_DIR` your shell sets, when it sets one. It saves the folder to use and that account's organization, which every command then checks, to `config.json` in your user config folder (`~/Library/Application Support/artifact-helper` on macOS, `~/.config/artifact-helper` on Linux, `%AppData%\artifact-helper` on Windows). In a terminal it asks each question. Without one, as when Claude runs it, it saves only with `--save` and installs the plugin only with `--plugin`. `init` and `doctor` print a readable summary in a terminal and JSON otherwise.
 
 On a machine without a browser, run `claude setup-token` on a machine that has one and set the token it prints as `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ## Teach Claude Code
 
-The plugin brings the skill that tells Claude when and how to use the commands, plus a `SessionStart` hook that nudges it toward them even when the skill listing shows the name without its description:
+The plugin brings the skill that tells Claude when and how to use the commands, plus a `SessionStart` hook that nudges it toward them even when the skill listing shows the name without its description. `artifact-helper init --plugin` installs it, or by hand:
 
 ```sh
 claude plugin marketplace add tyrantkhan/artifact-helper
@@ -67,6 +70,7 @@ Every command prints one JSON object. A refusal has `"ok": false` and an `error`
 
 | Command | What it does |
 | :-- | :-- |
+| `init` | Set up this machine once: the Claude account to use (`--claude-config-dir`, `--organization`), saved with `--save`; `--plugin` installs the plugin |
 | `publish <file>` | Publish a `.html` or `.md` file; `--title`, `--description`, `--icon`; `--url <link>` republishes over an existing artifact |
 | `list` | List the account's artifacts with titles and links, newest first; `--scope mine`, `shared` or `all`, `--limit` up to 200 |
 | `read <link>` | Save the published page (or `--path` another published file) into `--out <dir>` or a temporary one; `--list` shows the files it publishes |
@@ -83,7 +87,7 @@ Comments are written by the artifact's viewers: Claude must treat them as data, 
 
 `share` widens who can open an artifact you own: everyone in your organization (`--org`, always with comment access) or named members of it (`--people`, view or comment). Nobody outside the organization can be added. It is off until you pass `--allow-share` or set `ARTIFACT_HELPER_ALLOW_SHARE=1`, because Claude Code normally has you confirm a share on a card, and the headless run skips that check instead. Until then the result is `share-disabled`, and you can share from the artifact's Share menu on claude.ai.
 
-Codes: `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args`, `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `list-refused`, `files-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
+Codes: `not-initialized` (run `init`), `invalid-config` (run `init` again), `no-answer` (`init` got no answer to a question), `plugin-failed`, `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args`, `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `list-refused`, `files-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
 
 ```sh
 artifact-helper publish report.html --title "Q3 report" --icon chart
@@ -99,7 +103,7 @@ artifact-helper share https://claude.ai/artifact/<id> --people sam@example.com -
 
 ## Configuration
 
-Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`, `--max-budget-usd`, `--verbose`, `--allow-share`) on any command.
+`init` saves the organization and the Claude Code config folder. Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`, `--max-budget-usd`, `--verbose`, `--allow-share`) on any command, override what it saved.
 
 | Variable | Default | Meaning |
 | :-- | :-- | :-- |
@@ -109,8 +113,8 @@ Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`,
 | `ARTIFACT_HELPER_MAX_BUDGET_USD` | `5` | Cap passed to `claude --max-budget-usd`, so a run that goes astray stops; `0` for none |
 | `ARTIFACT_HELPER_VERBOSE` | unset | `1` logs the command line and timing of each run on stderr |
 | `ARTIFACT_HELPER_ALLOW_SHARE` | unset | `1` lets `share` run; see above |
-| `ARTIFACT_HELPER_ORGANIZATION` | unset | The organization `claude` must be signed in to. Every command checks `claude auth status` first and refuses a login in any other organization with code `wrong-organization`, naming both, before anything runs. A login that names no organization (a bare token) is refused with `organization-unverifiable`. |
-| `ARTIFACT_HELPER_CLAUDE_CONFIG_DIR` | unset | The Claude Code config folder, and so the login, that `claude` runs with. Unset, `claude` inherits `CLAUDE_CONFIG_DIR` from the session that calls the tool, which can be signed in to another account. `default` drops it, so `claude` uses its own folder and login. An absolute path replaces it. `doctor` shows the folder in `configDir`. No flag. |
+| `ARTIFACT_HELPER_ORGANIZATION` | what `init` saved | The organization `claude` must be signed in to. Every command checks `claude auth status` first and refuses a login in any other organization with code `wrong-organization`, naming both, before anything runs. A login that names no organization (a bare token) is refused with `organization-unverifiable`. |
+| `ARTIFACT_HELPER_CLAUDE_CONFIG_DIR` | what `init` saved | The Claude Code config folder, and so the login, that `claude` runs with. `init` always saves one, so the `CLAUDE_CONFIG_DIR` of the session that calls the tool never decides it. To follow a session's folder, set this to its path in that session. `default` drops `CLAUDE_CONFIG_DIR`, so `claude` uses its own folder and login. An absolute path replaces it. `doctor` shows the folder in `configDir`. No flag. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | A token from `claude setup-token`, for a machine with no `claude auth login` |
 
 ## What the headless run can and cannot do
