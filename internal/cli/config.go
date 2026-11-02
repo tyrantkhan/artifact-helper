@@ -59,10 +59,8 @@ func loadConfig(path string) (*config, error) {
 }
 
 func saveConfig(path string, c config) error {
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding the config: %w", err)
-	}
+	// Two strings always encode.
+	data, _ := json.MarshalIndent(c, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
 	}

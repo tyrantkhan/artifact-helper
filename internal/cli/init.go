@@ -163,19 +163,14 @@ func cmdInit(env *Env, args []string) error {
 		rf = &headless.Refusal{Code: "error", Message: err.Error()}
 		fmt.Fprintln(env.Stderr, "artifact-helper init: "+err.Error())
 	}
-	b, merr := json.Marshal(res)
-	out := map[string]any{}
-	if merr == nil {
-		merr = json.Unmarshal(b, &out)
-	}
-	if merr != nil {
-		return fmt.Errorf("encoding result: %w", merr)
-	}
-	out["ok"], out["command"], out["error"] = false, "init", rf
-	b, merr = json.MarshalIndent(out, "", "  ")
-	if merr != nil {
-		return fmt.Errorf("encoding result: %w", merr)
-	}
+	out := struct {
+		OK      bool   `json:"ok"`
+		Command string `json:"command"`
+		initResult
+		Error *headless.Refusal `json:"error"`
+	}{false, "init", *res, rf}
+	// Strings, booleans and slices of them always encode, as in writeError.
+	b, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Fprintln(env.Stdout, string(b))
 	return &exitError{code: 1}
 }
@@ -305,7 +300,7 @@ func runInit(u *ui, interactive bool, opts headless.Options, path, envDir, flagD
 func probe(ctx context.Context, opts headless.Options, dir string) (login, error) {
 	opts.ConfigDir, opts.Organization = dir, ""
 	h, err := headless.Doctor(ctx, opts)
-	if rf, ok := headless.IsRefusal(err); err != nil && !(ok && rf.Code == "not-logged-in" && h != nil) {
+	if rf, ok := headless.IsRefusal(err); err != nil && (!ok || rf.Code != "not-logged-in" || h == nil) {
 		return login{}, err
 	}
 	return login{ClaudeConfigDir: dir, LoggedIn: h.LoggedIn, AuthMethod: h.AuthMethod, Email: h.Email, Organization: h.Organization}, nil
