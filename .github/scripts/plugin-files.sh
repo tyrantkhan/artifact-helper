@@ -11,7 +11,7 @@ fi
 root=$(git rev-parse --show-toplevel)
 
 mkdir -p "$out/.claude-plugin" "$out/hooks"
-cp -p "$root/.claude-plugin/plugin.json" "$out/.claude-plugin/"
+cp -p "$root/.claude-plugin/plugin.json" "$root/.claude-plugin/icon.png" "$out/.claude-plugin/"
 cp -p "$root/hooks/hooks.json" "$root/hooks/session-start" "$out/hooks/"
 mkdir -p "$out/skills"
 cp -Rp "$root/skills/artifact-helper" "$out/skills/"
