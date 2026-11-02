@@ -30,12 +30,17 @@ extract_type() {
   echo "$msg" | sed -E 's/^([a-z]+)[!:(].*/\1/'
 }
 
+# A breaking change is marked by '!' after the type. release-please reads only the squash title, so a
+# breaking commit under a title without '!' would release as an ordinary change.
+breaking_re='^[a-z]+(\([^)]*\))?!:'
+is_breaking() { [[ "$1" =~ $breaking_re ]]; }
+
 # --- PR title type ---
 pr_type=$(extract_type "$PR_TITLE")
 pr_priority=$(get_priority "$pr_type")
 
 if [[ "$pr_priority" == "999" ]]; then
-  echo "::warning::Could not parse PR title type '$pr_type' — skipping priority check"
+  echo "::warning::Could not parse PR title type '$pr_type'; skipping the priority check"
   exit 0
 fi
 
@@ -44,6 +49,7 @@ echo "PR title type: $pr_type (priority $pr_priority)"
 # --- Commit types ---
 highest_type="$pr_type"
 highest_priority="$pr_priority"
+breaking_commit=""
 
 commits=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json commits --jq '.commits[].messageHeadline')
 
@@ -57,7 +63,10 @@ while IFS= read -r msg; do
     continue
   fi
 
-  echo "  Commit type: $ctype (priority $cpri) — $msg"
+  echo "  Commit type: $ctype (priority $cpri): $msg"
+  if is_breaking "$msg"; then
+    breaking_commit="$msg"
+  fi
 
   if (( cpri < highest_priority )); then
     highest_type="$ctype"
@@ -72,6 +81,13 @@ if (( highest_priority < pr_priority )); then
   echo "::error::Update the PR title to use '$highest_type' so release-please picks up the change."
   echo ""
   echo "Priority order: feat > fix > refactor > perf > docs > style > test > build > ci > chore > revert"
+  exit 1
+fi
+
+if [[ -n "$breaking_commit" ]] && ! is_breaking "$PR_TITLE"; then
+  echo ""
+  echo "::error::Commit '$breaking_commit' is a breaking change, but the PR title has no '!'."
+  echo "::error::Add '!' after the type in the PR title, as in '${pr_type}!: ...', so release-please releases it as one."
   exit 1
 fi
 

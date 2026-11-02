@@ -18,9 +18,10 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 - golangci-lint must be built with a Go at least as new as `go.mod`'s, or it refuses to load the config. When the
   installed one is older, `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run` builds CI's
   version with this Go without installing anything.
-- CI: `.github/workflows/ci.yml` (tests on Linux, macOS, Windows, with coverage and results sent to Codecov
-  and gated by `codecov.yml`; lint; govulncheck; shellcheck on `install.sh`, `hooks/session-start` and
-  `.github/scripts/plugin-files.sh`).
+- CI: `.github/workflows/ci.yml` (tests on Linux, macOS, Windows, with coverage and results from each sent to
+  Codecov and gated by `codecov.yml`; lint; govulncheck; shellcheck on `install.sh`, `hooks/session-start` and
+  `.github/scripts/*.sh`; `check-commit-types.sh`, which fails when the places listing commit types disagree).
+  Every action is pinned to a commit SHA with its version beside it; Dependabot moves the pins.
 
 ## Layout
 
