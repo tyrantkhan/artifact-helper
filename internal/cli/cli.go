@@ -582,6 +582,8 @@ published. Without --file, the live page is fetched first, which takes one more 
 before then lack the edit: publishing one refuses with changed-elsewhere until it is merged.
 
 The publish goes over a version as publish's does, and the result carries publish's "overwrote" and "warning".
+Given the link of an artifact whose page moved with --new, and that page as --file, it goes to the new artifact,
+and "forwardedFrom" names the link given.
 
 Result:
   {"ok": true, "command": "edit", "url": "https://claude.ai/artifact/<id>", "path": "/abs/page.html", "applied": 2,

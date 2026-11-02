@@ -238,9 +238,16 @@ func TestAPublishBeforeATimeoutIsReported(t *testing.T) {
 	// The run published, then hung until it was stopped: the page is live, so the publish is reported.
 	published := fakeclaude.Calls("", fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`, Text: "Published",
 		Data: `{"url":"` + link + `","updated":false,"version":"1793629160-0a57"}`})
-	bin := fakeclaude.Install(t, fakeclaude.Spec{Outputs: map[string]string{"publish": published}, Linger: 10 * time.Second})
-	res, err := Publish(context.Background(), Options{Claude: bin, Timeout: 500 * time.Millisecond}, Request{Path: page(t, "p.html")})
+	// The timeout leaves a slow runner time to start the fake and print.
+	bin := fakeclaude.Install(t, fakeclaude.Spec{Outputs: map[string]string{"publish": published}, Linger: 30 * time.Second})
+	res, err := Publish(context.Background(), Options{Claude: bin, Timeout: 2 * time.Second}, Request{Path: page(t, "p.html")})
 	if err != nil || res.URL != link || res.Version != "1793629160-0a57" || !strings.Contains(res.Warning, "did not finish") {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Stopped by a signal, the run exits non-zero before its result line: the publish is reported all the same.
+	bin = fakeclaude.Install(t, fakeclaude.Spec{Outputs: map[string]string{"publish": published}, Code: 1})
+	res, err = Publish(context.Background(), Options{Claude: bin}, Request{Path: page(t, "p.html")})
+	if err != nil || res.URL != link || !strings.Contains(res.Warning, "claude failed") {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 }

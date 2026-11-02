@@ -188,7 +188,8 @@ func TestALinkThisMachineReadIsGuarded(t *testing.T) {
 		t.Fatalf("code=%d out=%s", code, out)
 	}
 	// Read, never published: tracked for its version only.
-	if e := m.record(t).byURL(readLink); e == nil || e.Version != v3 || len(e.Sessions) != 0 || e.PublishedAt != "" {
+	// Stored without the slash, the link matches the account listing that updates reads.
+	if e := m.record(t).byURL(readLink); e == nil || e.URL != readLink || e.Version != v3 || len(e.Sessions) != 0 || e.PublishedAt != "" {
 		t.Fatalf("record = %+v", e)
 	}
 	// A page written to replace it goes only over the version read.
