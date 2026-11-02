@@ -42,6 +42,8 @@ The result's `url` is the artifact's link. Give it to the human. The artifact is
 
 Keep the file: to change the page later, edit the file and run `publish` again with `--url <link>`. The link stays the same and the page gets a new version. Never publish a changed page without `--url`, which would create a second artifact.
 
+`--url` MUST be the link of the artifact you are changing: the `url` that the last publish of this page returned. A page published more than once without `--url`, or once through the helper and once another way, lives in several artifacts, each with its own link. An older link is a different artifact. You MUST NOT reuse a link from earlier in the conversation, or from another session, without checking that it is still the page's current one. When you are not sure, run `artifact-helper list`, find the page by its title, and use its link; when two artifacts share the title, ask the human which one to change. The same rule holds for the link you pass to `edit`.
+
 ## 3. Read and edit
 
 When the human wants a change to an artifact and you have the file you published, edit the file and republish with `--url`. For a small change, `edit` does both: pipe a JSON array of `{"old_str": "...", "new_str": "..."}` into `artifact-helper edit <link> --file page.html` (or pass `--from edits.json`); each `old_str` must occur exactly once in the page, and all edits apply or none.
