@@ -2,3 +2,5 @@ bin/
 .DS_Store
 coverage.out
 junit.xml
+/artifact-helper
+/artifact-helper.exe

@@ -1,0 +1,3 @@
+# LF everywhere, whatever core.autocrlf says: a CRLF hooks/session-start fails in sh on the first line.
+* text=auto eol=lf
+*.png binary
