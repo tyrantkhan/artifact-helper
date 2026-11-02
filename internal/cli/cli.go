@@ -147,21 +147,38 @@ Environment (overrides what init saved):
                                   the Claude Code config folder, and so the login, claude runs with:
                                   default drops an inherited CLAUDE_CONFIG_DIR, an absolute path
                                   replaces it (default: what init saved)
-  CLAUDE_CODE_OAUTH_TOKEN                a token from claude setup-token, for a machine without a claude login
+  CLAUDE_CODE_OAUTH_TOKEN         a token from claude setup-token, for a machine without a claude login
 `)
 }
 
 // writeError prints a refusal as JSON on stdout, the channel agents read, and anything else on stderr as well.
 func writeError(env *Env, name string, err error) {
-	rf, ok := headless.IsRefusal(err)
-	if !ok {
-		rf = &headless.Refusal{Code: "error", Message: err.Error()}
-	}
-	b, _ := json.Marshal(map[string]any{"ok": false, "command": name, "error": rf})
+	b, _ := json.Marshal(map[string]any{"ok": false, "command": name, "error": toRefusal(env, name, err)})
 	fmt.Fprintln(env.Stdout, string(b))
-	if rf.Code == "error" {
-		fmt.Fprintln(env.Stderr, "artifact-helper "+name+": "+err.Error())
+}
+
+// toRefusal is err as the refusal a command prints. An error that is not a Refusal is unexpected: it gets
+// code "error", a fix, and a line on stderr.
+func toRefusal(env *Env, name string, err error) *headless.Refusal {
+	if rf, ok := headless.IsRefusal(err); ok {
+		return rf
 	}
+	fmt.Fprintln(env.Stderr, "artifact-helper "+name+": "+err.Error())
+	return &headless.Refusal{Code: "error", Message: err.Error(),
+		Fix: "the message names what failed, such as a file or folder; correct it and run the command again, or tell the person"}
+}
+
+// writeFailure prints a refusal that still carries what the command found: v's fields beside ok, command and
+// error, so an agent sees, for example, which logins init checked or which folder doctor used.
+func writeFailure(env *Env, name string, v any, err error) error {
+	out := map[string]any{}
+	// Results are structs of strings, numbers, booleans and slices of them, which always encode and decode.
+	b, _ := json.Marshal(v)
+	_ = json.Unmarshal(b, &out)
+	out["ok"], out["command"], out["error"] = false, name, toRefusal(env, name, err)
+	b, _ = json.Marshal(out)
+	fmt.Fprintln(env.Stdout, string(b))
+	return &exitError{code: 1}
 }
 
 // writeJSON prints the command's result: ok and command, then v's own fields.
@@ -190,12 +207,16 @@ func newFlags(env *Env, name, help string) *flag.FlagSet {
 	return fs
 }
 
-// parse lets flags follow positional arguments, which the flag package alone stops at. "--" ends flags.
+// parse lets flags follow positional arguments, which the flag package alone stops at. "--" ends flags. A flag
+// it cannot read is a Refusal with code "invalid-args".
 func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	for {
 		if err := fs.Parse(args); err != nil {
-			return nil, err
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, err
+			}
+			return nil, &headless.Refusal{Code: "invalid-args", Message: err.Error(), Fix: "run artifact-helper help " + fs.Name()}
 		}
 		rest := fs.Args()
 		if len(rest) == 0 {
@@ -235,7 +256,12 @@ func envOptions(env *Env) (headless.Options, error) {
 		return opts, err
 	}
 	opts.Environ = env.Environ()
-	if v := env.Getenv("ARTIFACT_HELPER_VERBOSE"); v != "" && v != "0" && !strings.EqualFold(v, "false") {
+	verbose, err := headless.ParseSwitch(env.Getenv("ARTIFACT_HELPER_VERBOSE"))
+	if err != nil {
+		return opts, &headless.Refusal{Code: "invalid-env", Message: "ARTIFACT_HELPER_VERBOSE: " + err.Error(),
+			Fix: "tell the person; the setting is theirs to correct"}
+	}
+	if verbose {
 		opts.Log = env.Stderr
 	}
 	return opts, nil
@@ -256,8 +282,9 @@ func options(env *Env) (headless.Options, error) {
 	if err != nil || c == nil {
 		return opts, err
 	}
+	// The saved ID belongs to the saved name: an organization named in the environment is checked by name.
 	if opts.Organization == "" {
-		opts.Organization = c.Organization
+		opts.Organization, opts.OrganizationID = c.Organization, c.OrganizationID
 	}
 	if opts.ConfigDir == "" {
 		opts.ConfigDir = c.ClaudeConfigDir
@@ -265,14 +292,39 @@ func options(env *Env) (headless.Options, error) {
 	return opts, nil
 }
 
+// addOptionFlags adds the flags every command takes. Each reads its value as the matching ARTIFACT_HELPER_*
+// variable does, so the two never disagree.
 func addOptionFlags(fs *flag.FlagSet, env *Env, opts *headless.Options) {
 	fs.StringVar(&opts.Claude, "claude", opts.Claude, "path of the claude binary")
 	fs.StringVar(&opts.Model, "model", opts.Model, "model for the headless run")
-	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "how long one run may take")
-	fs.Float64Var(&opts.MaxBudgetUSD, "max-budget-usd", opts.MaxBudgetUSD, "cap passed to claude --max-budget-usd; 0 for the default, negative for none")
-	fs.BoolFunc("verbose", "log each step on stderr", func(string) error { opts.Log = env.Stderr; return nil })
+	fs.Func("timeout", "how long one run may take, such as 5m", func(v string) error {
+		d, err := headless.ParseTimeout(v)
+		opts.Timeout = d
+		return err
+	})
+	fs.Func("max-budget-usd", "cap passed to claude --max-budget-usd; 0 for none", func(v string) error {
+		f, err := headless.ParseBudget(v)
+		opts.MaxBudgetUSD = f
+		return err
+	})
+	fs.BoolFunc("verbose", "log each step on stderr", func(v string) error {
+		on, err := headless.ParseSwitch(v)
+		opts.Log = nil
+		if on {
+			opts.Log = env.Stderr
+		}
+		return err
+	})
 	fs.BoolVar(&opts.AllowShare, "allow-share", opts.AllowShare, "let share run (see artifact-helper help share)")
-	fs.StringVar(&opts.Organization, "organization", opts.Organization, "the organization claude must be signed in to")
+	// An empty value would switch the organization check off, so it is refused rather than taken.
+	fs.Func("organization", "the organization claude must be signed in to", func(v string) error {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return errors.New("an organization name is required; the check cannot be turned off from a flag")
+		}
+		opts.Organization, opts.OrganizationID = v, ""
+		return nil
+	})
 }
 
 // setup parses args for a command: the shared option flags plus the command's own, and exactly want
@@ -329,7 +381,7 @@ func cmdPublish(env *Env, args []string) error {
 	opts, pos, err := setup(env, "publish", publishHelp, args, 1, func(fs *flag.FlagSet) {
 		fs.StringVar(&req.Title, "title", "", "fallback title when the page has no <title>")
 		fs.StringVar(&req.Description, "description", "", "one sentence for the gallery card")
-		fs.StringVar(&req.Icon, "icon", "", "one generic word for the browser-tab icon (default page)")
+		fs.StringVar(&req.Icon, "icon", "", "one generic word for the browser-tab icon (default "+headless.DefaultIcon+")")
 		fs.StringVar(&req.URL, "url", "", "an existing artifact's link to update in place")
 	})
 	if err != nil {
@@ -362,7 +414,7 @@ func cmdList(env *Env, args []string) error {
 	var limit int
 	opts, _, err := setup(env, "list", listHelp, args, 0, func(fs *flag.FlagSet) {
 		fs.StringVar(&scope, "scope", "mine", "mine, shared or all")
-		fs.IntVar(&limit, "limit", 25, "how many to list, at most 200")
+		fs.IntVar(&limit, "limit", headless.DefaultListLimit, fmt.Sprintf("how many to list, at most %d", headless.MaxListLimit))
 	})
 	if err != nil {
 		return err
@@ -527,7 +579,7 @@ func cmdReply(env *Env, args []string) error {
 	var text string
 	var resolve bool
 	opts, pos, err := setup(env, "reply", replyHelp, args, 2, func(fs *flag.FlagSet) {
-		fs.StringVar(&text, "text", "", "the reply, plain text, at most 4096 bytes")
+		fs.StringVar(&text, "text", "", fmt.Sprintf("the reply, plain text, at most %d bytes", headless.MaxReplyBytes))
 		fs.BoolVar(&resolve, "resolve", false, "also mark the thread resolved once the reply is posted")
 	})
 	if err != nil {
@@ -618,7 +670,7 @@ func cmdShare(env *Env, args []string) error {
 	return writeJSON(env, "share", res)
 }
 
-const doctorHelp = `Usage: artifact-helper doctor [--claude <path>] [--model <name>]
+const doctorHelp = `Usage: artifact-helper doctor ` + optionFlags + `
 
 Check that the claude binary is found and signed in, and show the settings a run would use. "email" and
 "organization" name the signed-in account when claude reports them (a claude.ai login does; a bare token may not).
@@ -634,8 +686,9 @@ Result:
    "loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "organization": "Example Inc",
    "expectedOrganization": "Example Inc", "configDir": "default", "model": "sonnet", "timeout": "5m0s"}
 
-A refusal's code is not-initialized, invalid-config, no-claude, not-logged-in, wrong-organization,
-organization-unverifiable or claude-failed.
+A refusal's code is not-initialized, invalid-config, invalid-env, invalid-args, no-claude, not-logged-in,
+wrong-organization, organization-unverifiable, claude-failed or bad-output. A refusal after claude ran still
+carries the fields above.
 `
 
 func cmdDoctor(env *Env, args []string) error {
@@ -643,7 +696,10 @@ func cmdDoctor(env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, stop := signalContext()
+	defer stop()
+	// Two steps of up to 30 seconds each: claude --version, then claude auth status.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	h, err := headless.Doctor(ctx, opts)
 	if isTerminal(env, env.Stdout) {
@@ -654,7 +710,10 @@ func cmdDoctor(env *Env, args []string) error {
 		}
 		return nil
 	}
-	if err != nil {
+	switch {
+	case err != nil && h != nil:
+		return writeFailure(env, "doctor", h, err)
+	case err != nil:
 		return err
 	}
 	return writeJSON(env, "doctor", h)
@@ -700,7 +759,7 @@ const getSkillHelp = `Usage: artifact-helper get-skill [--json]
 
 Print the version-matched guide as Markdown. The skill stub a host installs (skills/artifact-helper/SKILL.md)
 says when to engage and tells the agent to run this command, so the tool and command details it reads always
-match the binary it runs. With --json, print {"name", "version", "guide"} instead.
+match the binary it runs. With --json, print {"name", "version", "description", "guide"} instead.
 `
 
 func cmdGetSkill(env *Env, args []string) error {

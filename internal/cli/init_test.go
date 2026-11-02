@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -577,5 +579,97 @@ func TestARegularFileIsNoTerminal(t *testing.T) {
 	defer f.Close()
 	if isTerminal(&Env{}, f) || isTerminal(&Env{}, strings.NewReader("")) {
 		t.Fatal("a file or a reader passed for a terminal")
+	}
+}
+
+func TestOptionFlagsReadLikeTheirVariables(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "record")
+	m := newMachine(t, fakeclaude.Spec{Record: record, Outputs: map[string]string{"": linkOK}})
+	if err := saveConfig(m.config, config{Organization: "Example Inc", ClaudeConfigDir: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "p.html")
+	if err := os.WriteFile(p, []byte("<title>p</title>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lastRun := func() []string {
+		t.Helper()
+		var last []string
+		for _, r := range fakeclaude.Runs(t, record) {
+			if r[1] == "-p" {
+				last = r
+			}
+		}
+		return last
+	}
+	// An empty --organization would switch the check off, so it is refused; a padded name is trimmed.
+	for _, v := range []string{"", "   "} {
+		if code, out, _ := m.run("", "publish", p, "--organization", v); code != 1 || refusalCode(t, out) != "invalid-args" {
+			t.Errorf("--organization %q: code=%d out=%s", v, code, out)
+		}
+	}
+	if code, out, _ := m.run("", "publish", p, "--organization", "  example inc "); code != 0 {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// 0 means no cap from the flag, as it does from the variable.
+	if code, out, _ := m.run("", "publish", p, "--max-budget-usd", "0"); code != 0 || slices.Contains(lastRun(), "--max-budget-usd") {
+		t.Fatalf("code=%d out=%s args=%v", code, out, lastRun())
+	}
+	for _, args := range [][]string{{"--max-budget-usd", "-1"}, {"--max-budget-usd", "NaN"}, {"--timeout", "0"}} {
+		if code, out, _ := m.run("", append([]string{"publish", p}, args...)...); code != 1 || refusalCode(t, out) != "invalid-args" {
+			t.Errorf("%v: code=%d out=%s", args, code, out)
+		}
+	}
+	// --verbose=false stays quiet, and a typo in the variable is refused rather than read as on.
+	if _, _, errs := m.run("", "publish", p, "--verbose=false"); errs != "" {
+		t.Fatalf("logged: %s", errs)
+	}
+	if _, _, errs := m.run("", "publish", p, "--verbose"); !strings.Contains(errs, "running") {
+		t.Fatalf("no log: %q", errs)
+	}
+	m.getenv["ARTIFACT_HELPER_VERBOSE"] = "maybe"
+	if code, out, _ := m.run("", "publish", p); code != 1 || refusalCode(t, out) != "invalid-env" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+}
+
+func TestTheSavedOrganizationIDDecides(t *testing.T) {
+	other := `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc", "orgId": "org-2"}`
+	m := newMachine(t, fakeclaude.Spec{Auth: other})
+	if err := saveConfig(m.config, config{Organization: "Example Inc", OrganizationID: "org-1", ClaudeConfigDir: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	// Same name, another organization: refused, and the refusal keeps what doctor found.
+	code, out, _ := m.run("", "doctor")
+	if r := result(t, out); code != 1 || refusalCode(t, out) != "wrong-organization" || r["loggedIn"] != true || r["organizationId"] != "org-2" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// An organization named in the environment or by flag is checked by name.
+	m.getenv["ARTIFACT_HELPER_ORGANIZATION"] = "Example Inc"
+	if code, out, _ = m.run("", "doctor"); code != 0 {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	delete(m.getenv, "ARTIFACT_HELPER_ORGANIZATION")
+	if code, out, _ = m.run("", "doctor", "--organization", "Example Inc"); code != 0 {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// init saves the ID of the account it checked.
+	m = newMachine(t, fakeclaude.Spec{Auth: other})
+	if code, out, _ = m.run("", "init", "--save"); code != 0 || m.saved(t).OrganizationID != "org-2" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+}
+
+func TestHelpStatesTheLimitsTheCodeUses(t *testing.T) {
+	for _, c := range []struct{ name, help, want string }{
+		{"list", listHelp, fmt.Sprintf("default %d, at most %d", headless.DefaultListLimit, headless.MaxListLimit)},
+		{"read", readHelp, "default " + headless.DefaultPage},
+		{"publish", publishHelp, "(default " + headless.DefaultIcon + ")"},
+		{"init", initHelp, "claude plugin marketplace add " + headless.PluginMarketplace},
+		{"init", initHelp, "claude plugin install " + headless.PluginID},
+	} {
+		if !strings.Contains(c.help, c.want) {
+			t.Errorf("help %s does not say %q", c.name, c.want)
+		}
 	}
 }
