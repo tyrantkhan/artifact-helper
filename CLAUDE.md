@@ -59,12 +59,16 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
   behind `ARTIFACT_HELPER_ALLOW_SHARE`.
 - Comments live in the Artifact tool as actions `comments`, `reply` and `resolve`. Claude Code 2.1.316 lists
   them under its `ArtifactComments` tool but still accepts them on `Artifact` (checked). Reply and resolve work
-  only on a thread a person sent to Claude; the `not-activated` detection matches the tool's own text, and has
-  not yet seen the real wording.
+  only on a thread a person sent to Claude; the `not-activated` detection matches the tool's own text, whose
+  wording in 2.1.316 is "not activated on this thread".
 - Results come from the Artifact tool's own output in the stream wherever it has one: publish's link and
   `updated`, comments' `raw`. The model's prose can name a link while it explains a failure, so it is never
   scraped for one.
 - `claude auth status` reports `orgId` beside `orgName`; init saves both, and the check compares the ID.
+- A `-p` run with `--no-session-persistence` adds no project entry to `~/.claude.json` (checked), so starting
+  each run in a new temporary folder leaves nothing behind.
+- Publish reads its result from the Artifact call whose action is `publish`: an update calls `read` first, and
+  `streamTools` records each call's action so the read is never taken for the publish.
 - The fake claude refuses to write its `Files` outside the temporary folder, since a test once leaked
   `internal/cli/index.html` into the tree.
 - `claude auth status` carries `email` and `orgName` only for a claude.ai login; a bare token has neither,

@@ -5,7 +5,8 @@ traffic it causes is Claude Code's. Each command runs `claude -p` on this machin
 under your own Claude login and Anthropic's terms, what any `claude -p` run would send: the short prompt, the
 file you publish, whatever the Artifact tool returns (a page, a comment listing), and the context Claude Code
 loads for a run, such as CLAUDE.md files in and above the folder it starts in. A run that publishes starts in
-the published file's folder; every other run starts in an empty temporary folder. The artifacts live on
+the published file's folder, and a read with `--out` in a new folder inside the one it names; every other run
+starts in an empty temporary folder. The artifacts live on
 claude.ai in your account, private until you share their links.
 
 These are the files the tool writes:

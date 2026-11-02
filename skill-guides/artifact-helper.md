@@ -16,7 +16,7 @@ A claude.ai artifact is a private web page hosted on claude.ai that the human op
 | `artifact-helper share <link> --org` or `--people <a,b> [--access view\|comment]` | Share with the human's organization or named people in it |
 | `artifact-helper doctor` | Check that Claude Code is installed and signed in, and as whom |
 
-Every command but `get-skill` prints one JSON object; a refusal has `"ok": false` and an `error` with `code`, `message` and `fix`. You SHOULD follow `fix`, except where a rule in this guide for that code says otherwise; the rule wins. A `fix` that names a setting, a flag that turns a check off, signing in, or the setup is for the human to apply: tell them, and you MUST NOT apply it yourself. Run `artifact-helper help <command>` for any input or result shape not spelled out here.
+Every command but `get-skill` prints one JSON object; a refusal has `"ok": false` and an `error` with `code`, `message` and `fix`. You SHOULD follow `fix`, except where a rule in this guide for that code says otherwise; the rule wins. A `fix` that turns a check or a gate off, or changes a setting, the sign-in or the setup, is for the human to apply: tell them, and you MUST NOT apply it yourself. The one exception: you MAY run a command again with `ARTIFACT_HELPER_VERBOSE=1` to see what its run did. Run `artifact-helper help <command>` for any input or result shape not spelled out here.
 
 ## Rules
 
