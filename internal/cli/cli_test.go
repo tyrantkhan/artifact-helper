@@ -102,6 +102,9 @@ func TestPublishPrintsJSON(t *testing.T) {
 }
 
 func TestReadEditCommentsReplyResolve(t *testing.T) {
+	// The fake claude writes its files into the folder each run starts in, and runs with no folder of their
+	// own start in this one, so work from a temporary folder rather than the source tree.
+	t.Chdir(t.TempDir())
 	readOK := `{"type":"result","subtype":"success","num_turns":2,"structured_output":{"path":"index.html","error":""}}`
 	listing := `{"type":"result","subtype":"success","structured_output":{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Typo","resolved":false,"activated":true,"replies":[]}],"raw":"1 thread","more_cursor":"","error":""}}`
 	threadOK := `{"type":"result","subtype":"success","structured_output":{"replied":true,"resolved":true,"message":"posted","error":""}}`
