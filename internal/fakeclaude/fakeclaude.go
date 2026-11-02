@@ -1,0 +1,182 @@
+// Package fakeclaude stands in for the claude binary in tests, on every system. Install copies the running
+// test binary to a temporary claude with a spec file beside it; when that copy runs, Main answers as the
+// spec says. A shell script cannot do this on Windows.
+package fakeclaude
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+const (
+	specName = "fake-claude.json"
+	// runStart begins each invocation in the record, so Runs splits runs without guessing at paths.
+	runStart = "\x1e"
+)
+
+// Spec says how the fake answers.
+type Spec struct {
+	Version string // printed for --version
+	Auth    string // printed for auth, such as auth status
+	// Outputs holds the stdout of a run, chosen by the "Task: <op>." marker that starts the prompt (the last
+	// argument), falling back to the "" key.
+	Outputs map[string]string
+	Code    int           // exit code of a run
+	Sleep   time.Duration // how long a run waits before answering
+	// Files are created by every run in its working directory, by slash-separated relative path, unless they
+	// already exist.
+	Files map[string]string
+	// Record, when set, is the file each invocation appends its working directory and arguments to.
+	Record string
+}
+
+// Main answers as the fake claude and exits when the running binary is a copy Install made; otherwise it
+// returns. Call it first in TestMain.
+func Main() {
+	exe, err := os.Executable()
+	if err != nil {
+		panic(fmt.Sprintf("fakeclaude: cannot find the running binary: %v", err))
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(exe), specName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		fail(err)
+	}
+	var s Spec
+	if err := json.Unmarshal(data, &s); err != nil {
+		fail(err)
+	}
+	code, err := s.run(os.Args[1:])
+	if err != nil {
+		fail(err)
+	}
+	// Not os.Exit: under -race, a clean os.Exit waits a second for late race reports, on every fake run.
+	// Nothing here is buffered, so skipping the exit hooks loses nothing.
+	syscall.Exit(code)
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, "fakeclaude:", err)
+	os.Exit(125)
+}
+
+func (s Spec) run(args []string) (int, error) {
+	if s.Record != "" {
+		if err := s.record(args); err != nil {
+			return 0, err
+		}
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "--version":
+			fmt.Println(s.Version)
+			return 0, nil
+		case "auth":
+			fmt.Println(s.Auth)
+			return 0, nil
+		}
+	}
+	time.Sleep(s.Sleep)
+	for name, content := range s.Files {
+		p := filepath.FromSlash(name)
+		if _, err := os.Stat(p); err == nil {
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return 0, err
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return 0, err
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return 0, err
+		}
+	}
+	var prompt string
+	if len(args) > 0 {
+		prompt = args[len(args)-1]
+	}
+	out := s.Outputs[""]
+	for op, o := range s.Outputs {
+		if op != "" && strings.HasPrefix(prompt, "Task: "+op+".") {
+			out = o
+			break
+		}
+	}
+	fmt.Println(out)
+	return s.Code, nil
+}
+
+func (s Spec) record(args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(s.Record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(f, runStart+strings.Join(append([]string{cwd}, args...), "\x00")+"\x00")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// Install copies the running test binary to a claude in a new temporary directory, writes spec beside it, and
+// returns the copy's path.
+func Install(t testing.TB, spec Spec) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	// A hard link is instant; copying covers a temporary directory on another file system.
+	if lerr := os.Link(exe, bin); lerr != nil {
+		data, err := os.ReadFile(exe)
+		if err == nil {
+			err = os.WriteFile(bin, data, 0o755)
+		}
+		if err != nil {
+			t.Fatalf("install the fake claude: link: %v; copy: %v", lerr, err)
+		}
+	}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, specName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// Runs reads a record back as one list per invocation: the working directory, then the arguments.
+func Runs(t testing.TB, record string) [][]string {
+	t.Helper()
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runs [][]string
+	for _, r := range strings.Split(string(data), runStart)[1:] {
+		runs = append(runs, strings.Split(strings.TrimSuffix(r, "\x00"), "\x00"))
+	}
+	return runs
+}
