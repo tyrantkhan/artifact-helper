@@ -21,8 +21,32 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: "go.mod"
-      - run: go test -race ./...
+      # gotestsum runs go test and also writes the results as JUnit XML, which Codecov's test analytics reads.
+      # bash on every system, so Windows passes the arguments through as written.
+      - name: Test
+        shell: bash
+        run: go run gotest.tools/gotestsum@v1.13.0 --junitfile junit.xml -- -race -covermode=atomic -coverprofile=coverage.out ./...
       - run: go build -v ./cmd/artifact-helper
+      # Coverage is the same on every system, so one upload is enough. A failed upload, such as during a
+      # Codecov outage, does not fail the required test check.
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          disable_search: true
+      # Test results come from every system, flagged by system, and upload even when tests fail, which is
+      # when they matter.
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: junit.xml
+          disable_search: true
+          flags: ${{ matrix.os }}
 
   lint:
     name: Lint

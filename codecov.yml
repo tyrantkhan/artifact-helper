@@ -1,0 +1,17 @@
+# Coverage gates for pull requests. Both statuses are required checks on main.
+coverage:
+  status:
+    project:
+      default:
+        # Total coverage may not drop below the base commit's, beyond 0.05% of slack so that deleting
+        # well-covered code does not fail the gate on rounding.
+        target: auto
+        threshold: 0.05%
+    patch:
+      default:
+        # At least 90% of the lines a pull request changes must be covered.
+        target: 90%
+
+ignore:
+  # main only connects the CLI to the process; unit tests cannot run it.
+  - "cmd/artifact-helper"

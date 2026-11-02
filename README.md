@@ -3,6 +3,7 @@
 [![CI](https://github.com/tyrantkhan/artifact-helper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/artifact-helper/actions/workflows/ci.yml)
 [![Release](https://github.com/tyrantkhan/artifact-helper/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/tyrantkhan/artifact-helper/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/tyrantkhan/artifact-helper)](https://github.com/tyrantkhan/artifact-helper/releases/latest)
+[![codecov](https://codecov.io/gh/tyrantkhan/artifact-helper/graph/badge.svg)](https://codecov.io/gh/tyrantkhan/artifact-helper)
 
 Publish, edit, share and answer comments on [claude.ai artifacts](https://claude.ai/code/artifacts) from Claude Code, through the Claude subscription you already have.
 
