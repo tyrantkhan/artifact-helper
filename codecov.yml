@@ -17,3 +17,9 @@ ignore:
   - "cmd/artifact-helper"
   # The fake claude only runs as a child process of the tests, where coverage is not collected.
   - "internal/fakeclaude"
+
+# Every test job uploads its coverage, one per system. Wait for all three before posting the statuses, so code
+# only one system runs is not counted as uncovered by an early status.
+codecov:
+  notify:
+    after_n_builds: 3
