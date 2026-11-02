@@ -95,8 +95,9 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	readOK := `{"type":"result","subtype":"success","num_turns":2,"structured_output":{"path":"index.html","error":""}}`
 	listing := `{"type":"result","subtype":"success","structured_output":{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Typo","resolved":false,"activated":true,"replies":[]}],"raw":"1 thread","more_cursor":"","error":""}}`
 	threadOK := `{"type":"result","subtype":"success","structured_output":{"replied":true,"resolved":true,"message":"posted","error":""}}`
-	files := `{"type":"result","subtype":"success","structured_output":{"files":["assets/app.js"],"version":"v1","raw":"Published files","error":""}}`
-	artifacts := `{"type":"result","subtype":"success","structured_output":{"artifacts":[{"title":"Q3","url":"` + link + `","updated":"2026-11-01","owner":"mine"}],"total":21,"raw":"Showing 1 of 21","error":""}}`
+	done := `{"type":"result","subtype":"success","result":"Listed."}`
+	files := fakeclaude.ToolRun("Artifact", `{"file_list":{"ver":"v1","files":[{"path":"assets/app.js"}]}}`, "Published files", false, done)
+	artifacts := fakeclaude.ToolRun("Artifact", `{"artifacts":[{"title":"Q3","url":"`+link+`","updatedAt":"2026-11-01T09:30:00Z","rel":"mine"}],"total":21}`, "Showing 1 of 21", false, done)
 	bin := fakeClaude(t, map[string]string{"read": readOK, "publish": linkOK, "comments": listing, "reply": threadOK, "resolve": threadOK, "files": files, "list": artifacts},
 		map[string]string{"index.html": "<h1>Hello</h1>"})
 	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}

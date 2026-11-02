@@ -185,3 +185,22 @@ func Runs(t testing.TB, record string) [][]string {
 	}
 	return runs
 }
+
+// ToolRun is the stdout of a stream-json run that made one call to tool: the tool returned data, its structured
+// result (JSON, "null" for none), and text, what the model was shown, marked as an error when isError. The
+// run then ended with result, its final result line.
+func ToolRun(tool, data, text string, isError bool, result string) string {
+	use, err := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_use", "id": "toolu_1", "name": tool, "input": map[string]any{}},
+	}}})
+	if err != nil {
+		panic(err)
+	}
+	res, err := json.Marshal(map[string]any{"type": "user", "tool_use_result": json.RawMessage(data), "message": map[string]any{"content": []any{
+		map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "is_error": isError, "content": []any{map[string]any{"type": "text", "text": text}}},
+	}}})
+	if err != nil {
+		panic(err)
+	}
+	return string(use) + "\n" + string(res) + "\n" + result
+}
