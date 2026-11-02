@@ -27,6 +27,11 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - `cmd/artifact-helper` is `main`; `internal/cli` is the command table (an `Env` with injected stdio, every
   command prints one JSON object, a refusal is `{"ok": false, "error": {code, message, fix}}`).
+- `internal/cli/record.go` keeps `published.json` beside the config: each artifact this machine published,
+  keyed by link, with its file, the sessions that published it (`CLAUDE_CODE_SESSION_ID`, which Claude Code
+  sets for every command it runs), the last version published or read, and old links as aliases. publish and
+  edit resolve the link from it, so callers never manage links; `updates` reports a session's artifacts from it.
+  A publish passes the recorded version as `ExpectVersion`, and goes only over it.
 - `init` saves a config (`internal/cli/config.go`) that every command but `get-skill` and `init` requires
   (`not-initialized`); environment variables and flags override it. Tests MUST set `Env.Config` to a
   temporary path (`savedConfig`), so no test reads or writes the real one. `init` and `doctor` print a

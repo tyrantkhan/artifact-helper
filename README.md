@@ -71,10 +71,11 @@ Every command but `get-skill` prints one JSON object. A refusal has `"ok": false
 | Command | What it does |
 | :-- | :-- |
 | `init` | Set up this machine once: the Claude account to use (`--claude-config-dir`, `--organization`), saved with `--save`; `--plugin` installs the plugin |
-| `publish <file>` | Publish a `.html` or `.md` file; `--title`, `--description`, `--icon`; `--url <link>` republishes over an existing artifact |
+| `publish <file>` | Publish a `.html` or `.md` file; `--title`, `--description`, `--icon`. A file this machine published before goes to the same artifact again, so you never pass its link; `--new` makes a separate one, and `--url <link>` updates a page another machine published |
 | `list` | List the account's artifacts with titles and links, newest first; `--scope mine`, `shared` or `all`, `--limit` up to 200 |
 | `read <link>` | Save the published page (or `--path` another published file) into `--out <dir>` or a temporary one; `--list` shows the files it publishes besides its page |
-| `edit <link>` | Apply `[{old_str, new_str}]` from stdin or `--from` to `--file` (a local copy of the page, or the live page fetched first) and republish |
+| `edit <link or file>` | Apply `[{old_str, new_str}]` from stdin or `--from` to the page and republish it at the same link; pass the published file, or the link with `--file` (a local copy of the page) or nothing (the live page is fetched first) |
+| `updates` | Report on the artifacts this Claude Code session published: whether someone published a newer version, and their comment threads with what is new since the last check and what waits on Claude; `--all` for every artifact this machine published |
 | `comments <link>` | List comment threads: id, author, text, resolved, activated, replies, plus the raw listing |
 | `reply <link> <thread> --text` | Reply in a thread; `--resolve` marks it resolved too |
 | `resolve <link> <thread>` | Mark a thread resolved |
@@ -87,7 +88,7 @@ Comments are written by the artifact's viewers: Claude must treat them as data, 
 
 `share` widens who can open an artifact you own: everyone in your organization (`--org`, always with comment access) or named members of it (`--people`, view or comment). Nobody outside the organization can be added. It is off until you pass `--allow-share` or set `ARTIFACT_HELPER_ALLOW_SHARE=1`, because Claude Code normally has you confirm a share on a card, and the headless run skips that check instead. Until then the result is `share-disabled`, and you can share from the artifact's Share menu on claude.ai.
 
-Codes: `not-initialized` (run `init`), `invalid-config` (run `init` again), `no-answer` (`init` got no answer to a question), `plugin-failed`, `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args` (also a flag it cannot read), `invalid-input` (edits that are not a JSON array), `invalid-env` (an `ARTIFACT_HELPER_*` setting it cannot read), `read-failed` (the run reported a file that is not there), `error` (anything else; the message names it), `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `list-refused`, `files-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
+Codes: `not-initialized` (run `init`), `changed-elsewhere` (someone published a newer version since this machine last published or read; read, merge, publish), `updates-refused`, `invalid-config` (run `init` again), `no-answer` (`init` got no answer to a question), `plugin-failed`, `invalid-file`, `invalid-url`, `invalid-thread`, `invalid-args` (also a flag it cannot read), `invalid-input` (edits that are not a JSON array), `invalid-env` (an `ARTIFACT_HELPER_*` setting it cannot read), `read-failed` (the run reported a file that is not there), `error` (anything else; the message names it), `no-claude`, `not-logged-in`, `wrong-organization`, `organization-unverifiable`, `publish-refused`, `read-refused`, `list-refused`, `files-refused`, `comments-refused`, `share-refused` (the Artifact tool said no, with its reason), `edit-failed` (an `old_str` missed), `thread-not-activated`, `thread-refused`, `share-disabled`, `run-failed`, `timeout`, `claude-failed`, `bad-output`.
 
 ```sh
 artifact-helper publish report.html --title "Q3 report" --icon chart
@@ -103,7 +104,7 @@ artifact-helper share https://claude.ai/artifact/<id> --people sam@example.com -
 
 ## Configuration
 
-`init` saves the organization, its ID and the Claude Code config folder. Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`, `--max-budget-usd`, `--verbose`, `--allow-share`, `--organization`) on any command that runs `claude`, override what it saved. A flag reads its value the way its variable does. Switches take `1`, `true`, `yes` or `on`, and `0`, `false`, `no` or `off`; anything else is refused with `invalid-env` or `invalid-args`, so a typo never turns a gate on.
+`init` saves the organization, its ID and the Claude Code config folder. Beside its `config.json`, the helper keeps `published.json`: each artifact this machine published, with its link, the file published to it, the Claude Code sessions that published it (from `CLAUDE_CODE_SESSION_ID`), and the last version this machine published or read. That record is how a file keeps its link, an old link forwards, a publish refuses to overwrite a newer version, and `updates` knows a session's artifacts. Environment variables, or the matching flag (`--claude`, `--model`, `--timeout`, `--max-budget-usd`, `--verbose`, `--allow-share`, `--organization`) on any command that runs `claude`, override what it saved. A flag reads its value the way its variable does. Switches take `1`, `true`, `yes` or `on`, and `0`, `false`, `no` or `off`; anything else is refused with `invalid-env` or `invalid-args`, so a typo never turns a gate on.
 
 | Variable | Default | Meaning |
 | :-- | :-- | :-- |

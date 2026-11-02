@@ -14,6 +14,9 @@ These are the files the tool writes:
 - A fetched page, in the folder you name with `--out`, or a temporary one.
 - The setup `init` saves: `config.json` in your user config folder, holding the organization's name and ID
   and the Claude Code config folder to use.
+- Beside it, `published.json`: the link, title and local file of each artifact this machine published, the
+  Claude Code session IDs that published it, the last version it published or read, and the IDs of the
+  comments `updates` has already reported. Comment text is not kept.
 - The skill stub `install` writes to Claude Code's skills folder, and a backup of a copy it replaces with
   `--force`, in a folder beside it.
 - With `init --plugin`, Claude Code itself adds this repository as a plugin marketplace and installs the
