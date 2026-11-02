@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1338,4 +1339,106 @@ func TestReadAndEditRefuseFilesTheyCannotUse(t *testing.T) {
 	}
 	_, err = EditArtifact(ctx, Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v2", "Probe v3"}}})
 	wantRefusal(t, err, "invalid-file")
+}
+
+func TestPublishOnlyOverTheExpectedVersion(t *testing.T) {
+	ctx := context.Background()
+	p := page(t, "p.html")
+	done := `{"type":"result","subtype":"success","structured_output":{"url":"","error":"x"}}`
+	read := func(ver string, owned bool) fakeclaude.Call {
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read","url":"` + link + `"}`,
+			Data: fmt.Sprintf(`{"artifactRead":{"slug":"s","ver":%q},"owned":%v}`, ver, owned), Text: "[Artifact ...]"}
+	}
+	publish := func(ver string, refused bool) fakeclaude.Call {
+		data, text := fmt.Sprintf(`{"url":%q,"updated":true,"title":"Q3","version":%q}`, link, ver), "Published"
+		if refused {
+			data, text = `{}`, "This session hadn't viewed the live version of this artifact, so the publish was refused."
+		}
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish","url":"` + link + `"}`, Data: data, Text: text, IsError: refused}
+	}
+	req := Request{Path: p, URL: link, ExpectVersion: "1793629160-0a57"}
+	// The live version is someone else's: the run stops before publishing, and the read's own data says so.
+	bin, record := fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(done, read("1793699999-beef", true))}, 0, nil)
+	_, err := Publish(ctx, Options{Claude: bin}, req)
+	if rf := wantRefusal(t, err, "changed-elsewhere"); !strings.Contains(rf.Message, "1793699999-beef") || !strings.Contains(rf.Message, "1793629160-0a57") {
+		t.Fatalf("message = %q", rf.Message)
+	}
+	if prompt := fakeclaude.Runs(t, record)[0]; !strings.Contains(prompt[len(prompt)-1], `If it is not exactly "1793629160-0a57"`) {
+		t.Fatalf("prompt = %s", prompt[len(prompt)-1])
+	}
+	// The model's answer alone, with no read data, also refuses.
+	bin, _ = fakeClaude(t, map[string]string{"publish": `{"type":"result","subtype":"success","structured_output":{"url":"","error":"changed elsewhere: 1793699999-beef"}}`}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, req)
+	wantRefusal(t, err, "changed-elsewhere")
+	// Ours, but the tool had not counted the read: one retry in the same run goes through.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(done, read("1793629160-0a57", true), publish("", true), publish("1793700000-c0de", false))}, 0, nil)
+	res, err := Publish(ctx, Options{Claude: bin}, req)
+	if err != nil || !res.Retried || res.Version != "1793700000-c0de" || res.Title != "Q3" || !res.Updated {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Another account's artifact: the refusal says so, which is why the read did not count.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(`{"type":"result","subtype":"success","structured_output":{"url":"","error":"refused"}}`,
+		read("1793629160-0a57", false), publish("", true))}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, Request{Path: p, URL: link})
+	if rf := wantRefusal(t, err, "publish-refused"); !strings.Contains(rf.Message, "another account") {
+		t.Fatalf("message = %q", rf.Message)
+	}
+}
+
+func TestReadReportsTheVersion(t *testing.T) {
+	stream := fakeclaude.Calls(readOK, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read","url":"` + link + `"}`,
+		Data: `{"file_read":{"ver":"1793629160-0a57","path":"index.html"}}`, Text: "File saved"})
+	bin, _ := fakeClaude(t, map[string]string{"read": stream}, 0, map[string]string{"index.html": "<p>x</p>"})
+	res, err := Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link})
+	if err != nil || res.Version != "1793629160-0a57" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	os.RemoveAll(filepath.Dir(res.SavedPath))
+}
+
+func TestUpdatesReadsEverythingFromTheToolsData(t *testing.T) {
+	ctx := context.Background()
+	other := "https://claude.ai/artifact/Other1"
+	list := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list","scope":"all","limit":200}`,
+		Data: `{"artifacts":[{"title":"Q3","url":"` + link + `","updatedAt":"2026-11-02T14:19:20Z"}],"total":1}`, Text: "1 artifact"}
+	threads := `{"cursor":"c2","names":{"acct-1":"Sam"},"threads":[{"id":"t1","resolved":false,"claude_activated":true,` +
+		`"comments":[{"id":"c1","account":"acct-1","text":"Fix the typo","created_at":"2026-11-02T15:00:00Z","sent_to_claude":true,"awaiting_reply":true}]}]}`
+	comments := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + link + `"}`, Data: threads, Text: "1 thread"}
+	refused := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + other + `"}`, Data: `{}`, Text: "not your artifact", IsError: true}
+	done := `{"type":"result","subtype":"success","result":"done"}`
+	bin, record := fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, list, comments, refused)}, 0, nil)
+	res, err := Updates(ctx, Options{Claude: bin}, []string{link, other})
+	if err != nil || len(res.Artifacts) != 2 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	a, b := res.Artifacts[0], res.Artifacts[1]
+	if a.UpdatedAt != "2026-11-02T14:19:20Z" || !a.MoreThreads || len(a.Threads) != 1 || !a.Threads[0].Activated ||
+		a.Threads[0].Comments[0].Author != "Sam" || !a.Threads[0].Comments[0].AwaitingReply {
+		t.Fatalf("first = %+v", a)
+	}
+	if b.UpdatedAt != "" || b.Error != "not your artifact" || len(b.Threads) != 0 {
+		t.Fatalf("second = %+v", b)
+	}
+	prompt := fakeclaude.Runs(t, record)[0]
+	if p := prompt[len(prompt)-1]; !strings.Contains(p, link) || !strings.Contains(p, other) || !strings.Contains(p, `"action":"list"`) {
+		t.Fatalf("prompt = %s", p)
+	}
+	// Nothing to check runs nothing; too many, a bad link, a refused or missing listing refuse.
+	if res, err := Updates(ctx, Options{Claude: "/no/such/claude"}, nil); err != nil || len(res.Artifacts) != 0 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	many := make([]string, MaxUpdates+1)
+	for i := range many {
+		many[i] = link
+	}
+	_, err = Updates(ctx, Options{Claude: bin}, many)
+	wantRefusal(t, err, "invalid-args")
+	_, err = Updates(ctx, Options{Claude: bin}, []string{"https://example.com/x"})
+	wantRefusal(t, err, "invalid-url")
+	bin, _ = fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list"}`, Data: `{}`, Text: "no", IsError: true})}, 0, nil)
+	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
+	wantRefusal(t, err, "updates-refused")
+	bin, _ = fakeClaude(t, map[string]string{"updates": done}, 0, nil)
+	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
+	wantRefusal(t, err, "bad-output")
 }
