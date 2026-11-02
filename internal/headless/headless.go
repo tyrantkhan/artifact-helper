@@ -1749,7 +1749,12 @@ func streamTools(stream []byte) []toolCall {
 		for _, c := range ev.Message.Content {
 			switch {
 			case ev.Type == "assistant" && c.Type == "tool_use":
-				names[c.ID], actions[c.ID], urls[c.ID] = c.Name, c.Input.Action, c.Input.URL
+				action := c.Input.Action
+				// The Artifact tool publishes when a call names no action, and the model often leaves it out.
+				if c.Name == "Artifact" && action == "" {
+					action = "publish"
+				}
+				names[c.ID], actions[c.ID], urls[c.ID] = c.Name, action, c.Input.URL
 			case ev.Type == "user" && c.Type == "tool_result":
 				calls = append(calls, toolCall{Name: names[c.ToolUseID], Action: actions[c.ToolUseID], URL: urls[c.ToolUseID], Data: ev.ToolUseResult,
 					Text: contentText(c.Content), IsError: c.IsError})

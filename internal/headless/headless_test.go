@@ -1501,6 +1501,12 @@ func TestPublishTrustsTheToolsOwnData(t *testing.T) {
 	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.Overwrote != "" || res.Version != "1793700000-c0de" {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
+	// A call that names no action is a publish, as the tool treats it. The live model often leaves it out.
+	bare := fakeclaude.Call{Tool: "Artifact", Input: `{"file_path":"p.html","url":"` + link + `"}`, Data: done, Text: "Published"}
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, read(`{"artifactRead":{"ver":"`+expected+`"}}`), bare)}, 0, nil)
+	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.Version != "1793700000-c0de" || res.Overwrote != "" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
 	// Publish data with no link leaves the run's answer to decide.
 	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, publish(`{}`))}, 0, nil)
 	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.URL != link || res.Version != "" {
