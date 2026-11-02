@@ -48,5 +48,7 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - Conventional Commits; branches `<type>/<issue>-<description>` (lefthook checks both). release-please cuts
   releases from `main` and bumps `internal/cli/cli.go` and `.claude-plugin/plugin.json`.
+- `main` takes squash merges only, behind a ruleset like sift's. The PR title becomes the commit
+  release-please reads, so `pr-title.yml` checks it and requires the highest-priority type of its commits.
 - Commit messages, PR bodies and code carry no model identifiers.
 - Prose in help text, README and the guide: short sentences, no em-dashes, one idea each, as the rest reads.
