@@ -9,8 +9,9 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - `mise run build` → `bin/artifact-helper` with the git version baked in; `mise run test`; `mise run lint`.
   Plain `go build ./cmd/artifact-helper`, `go test ./...` and `golangci-lint run` do the same.
-- Tests never call the real `claude`: a fake shell script answers by the `Task: <op>.` marker that starts
-  every prompt (`fakeClaude` in `internal/headless/headless_test.go`). Keep that marker first in any new prompt.
+- Tests never call the real `claude`: `internal/fakeclaude` copies the test binary to a temporary `claude`
+  that answers by the `Task: <op>.` marker that starts every prompt, on every system (`fakeClaude` in
+  `internal/headless/headless_test.go`). Keep that marker first in any new prompt.
 - golangci-lint must be built with a Go at least as new as `go.mod`'s, or it refuses to load the config.
 - CI: `.github/workflows/ci.yml` (tests on Linux, macOS, Windows, with coverage and results sent to Codecov
   and gated by `codecov.yml`; lint; govulncheck; shellcheck on `install.sh`, `hooks/session-start` and

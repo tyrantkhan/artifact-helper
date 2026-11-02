@@ -15,3 +15,5 @@ coverage:
 ignore:
   # main only connects the CLI to the process; unit tests cannot run it.
   - "cmd/artifact-helper"
+  # The fake claude only runs as a child process of the tests, where coverage is not collected.
+  - "internal/fakeclaude"

@@ -7,13 +7,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tyrantkhan/artifact-helper/internal/fakeclaude"
 	"github.com/tyrantkhan/artifact-helper/internal/skillinstall"
 )
+
+func TestMain(m *testing.M) {
+	fakeclaude.Main()
+	os.Exit(m.Run())
+}
 
 const (
 	link       = "https://claude.ai/artifact/Abc123"
@@ -21,25 +26,9 @@ const (
 	linkOK     = `{"type":"result","subtype":"success","num_turns":3,"total_cost_usd":0.1,"duration_ms":10,"structured_output":{"url":"` + link + `","error":""}}`
 )
 
-func fakeClaude(t *testing.T, outputs map[string]string, pre string) string {
+func fakeClaude(t *testing.T, outputs map[string]string, files map[string]string) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake claude is a shell script")
-	}
-	bin := filepath.Join(t.TempDir(), "claude")
-	var b strings.Builder
-	b.WriteString("#!/bin/sh\ncase \"$1\" in --version) echo '9.9.9'; exit 0;; auth) echo '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'; exit 0;; esac\n")
-	b.WriteString("for a; do prompt=$a; done\n" + pre + "\ncase \"$prompt\" in\n")
-	for op, out := range outputs {
-		if op != "" {
-			b.WriteString("  'Task: " + op + ".'*) cat <<'STDOUT'\n" + out + "\nSTDOUT\n;;\n")
-		}
-	}
-	b.WriteString("  *) cat <<'STDOUT'\n" + outputs[""] + "\nSTDOUT\n;;\nesac\n")
-	if err := os.WriteFile(bin, []byte(b.String()), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return bin
+	return fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9", Auth: `{"loggedIn":true,"authMethod":"claude.ai"}`, Outputs: outputs, Files: files})
 }
 
 func run(t *testing.T, env map[string]string, stdin string, args ...string) (code int, stdout, stderr string) {
@@ -81,7 +70,7 @@ func TestHelpAndVersion(t *testing.T) {
 }
 
 func TestPublishPrintsJSON(t *testing.T) {
-	bin := fakeClaude(t, map[string]string{"publish": linkOK}, "")
+	bin := fakeClaude(t, map[string]string{"publish": linkOK}, nil)
 	p := filepath.Join(t.TempDir(), "page.html")
 	if err := os.WriteFile(p, []byte("<title>x</title>"), 0o644); err != nil {
 		t.Fatal(err)
@@ -109,7 +98,7 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	files := `{"type":"result","subtype":"success","structured_output":{"files":["assets/app.js"],"version":"v1","raw":"Published files","error":""}}`
 	artifacts := `{"type":"result","subtype":"success","structured_output":{"artifacts":[{"title":"Q3","url":"` + link + `","updated":"2026-11-01","owner":"mine"}],"total":21,"raw":"Showing 1 of 21","error":""}}`
 	bin := fakeClaude(t, map[string]string{"read": readOK, "publish": linkOK, "comments": listing, "reply": threadOK, "resolve": threadOK, "files": files, "list": artifacts},
-		`[ -e "$PWD/index.html" ] || printf '<h1>Hello</h1>' > "$PWD/index.html"`)
+		map[string]string{"index.html": "<h1>Hello</h1>"})
 	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	out := t.TempDir()
 
@@ -178,7 +167,7 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 
 func TestShare(t *testing.T) {
 	ok := `{"type":"result","subtype":"success","structured_output":{"shared":true,"message":"Shared","error":""}}`
-	bin := fakeClaude(t, map[string]string{"share": ok}, "")
+	bin := fakeClaude(t, map[string]string{"share": ok}, nil)
 	env := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	code, o, _ := run(t, env, "", "share", link, "--org")
 	if code != 1 || result(t, o)["error"].(map[string]any)["code"] != "share-disabled" {
@@ -204,7 +193,7 @@ func TestShare(t *testing.T) {
 }
 
 func TestRefusalsAreJSONOnStdout(t *testing.T) {
-	bin := fakeClaude(t, map[string]string{"": ""}, "")
+	bin := fakeClaude(t, map[string]string{"": ""}, nil)
 	withBin := map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}
 	cases := []struct {
 		args []string
@@ -235,7 +224,7 @@ func TestRefusalsAreJSONOnStdout(t *testing.T) {
 }
 
 func TestDoctorPrintsJSON(t *testing.T) {
-	bin := fakeClaude(t, map[string]string{"": ""}, "")
+	bin := fakeClaude(t, map[string]string{"": ""}, nil)
 	code, out, _ := run(t, map[string]string{"ARTIFACT_HELPER_CLAUDE": bin}, "", "doctor")
 	if code != 0 || !strings.Contains(out, `"loggedIn": true`) || !strings.Contains(out, `"version": "9.9.9"`) {
 		t.Fatalf("exit %d: %s", code, out)
