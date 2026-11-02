@@ -193,14 +193,15 @@ func shipped() []skills.Skill {
 // judge says what the copy of skill s at path is, from what observe found there: "" when there is none.
 // Install and uninstall both decide from it, so they never disagree about a folder.
 func judge(path string, o Observed, s skills.Skill) string {
-	switch o.Kind {
-	case holdsNothing:
+	switch {
+	// An empty folder holds nothing to keep, such as one a failed install left behind: install writes into it.
+	case o.Kind == holdsNothing, o.Kind == holdsFolder && len(o.Entries) == 0:
 		return ""
-	case holdsLink:
+	case o.Kind == holdsLink:
 		return StateLink
-	case holdsFile:
+	case o.Kind == holdsFile:
 		return StateOther
-	case holdsFolder:
+	case o.Kind == holdsFolder:
 		// Ours means SKILL.md alone, as a build wrote it. Anything beside it is the person's, so the folder is
 		// theirs to keep: uninstall removes only what this check calls ours.
 		ours := len(o.Entries) == 1 && o.Entries[0] == "SKILL.md" && slices.Contains(s.Released, o.Digest)

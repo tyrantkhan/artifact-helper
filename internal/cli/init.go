@@ -215,19 +215,19 @@ func runInit(u *ui, interactive bool, opts headless.Options, path, envDir, flagD
 	// the person which folder to use, and the plugin, which does not depend on that folder, still installs.
 	if !chosen.LoggedIn && (save || interactive) {
 		return res, &headless.Refusal{Code: "not-logged-in", Message: "claude is not signed in with config folder " + choice,
-			Fix: "run `claude auth login` (with CLAUDE_CONFIG_DIR set to that folder unless it is default), or pick another folder with --claude-config-dir"}
+			Fix: "tell the person; they can sign in there with `claude auth login` (with CLAUDE_CONFIG_DIR set to that folder unless it is default), or pick another folder"}
 	}
 	res.Organization, res.OrganizationID = chosen.Organization, chosen.OrganizationID
 	if opts.Organization != "" && chosen.LoggedIn {
 		if chosen.Organization == "" {
 			return res, &headless.Refusal{Code: "organization-unverifiable",
 				Message: fmt.Sprintf("--organization is %s, but config folder %s is signed in as %s, which names no organization, so it could never be checked", opts.Organization, choice, chosen.account()),
-				Fix:     "drop --organization, or sign in with `claude auth login` so claude reports the organization"}
+				Fix:     "tell the person; they can leave the organization out, or sign in with `claude auth login` so claude reports it"}
 		}
 		if !strings.EqualFold(opts.Organization, chosen.Organization) {
 			return res, &headless.Refusal{Code: "wrong-organization",
 				Message: fmt.Sprintf("--organization is %s, but config folder %s is signed in as %s", opts.Organization, choice, chosen.account()),
-				Fix:     "drop --organization to take the account's, or sign in with an account in " + opts.Organization}
+				Fix:     "tell the person; they can leave the organization out to take the account's, or sign in with an account in " + opts.Organization}
 		}
 	}
 

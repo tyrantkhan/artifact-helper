@@ -267,6 +267,14 @@ func TestAFailedWriteLeavesNoTempFile(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(skillDir(e), tempName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the temporary file is still there: %v", err)
 	}
+	// The empty folder the failure left holds nothing to keep: the next install writes into it.
+	writeStub = os.WriteFile
+	if op := only(t, mustMake(t, e, Options{})); op.Kind != Write {
+		t.Fatalf("op = %+v", op)
+	}
+	if outs := Execute(e, mustMake(t, e, Options{})); Failed(outs) {
+		t.Fatalf("outs = %+v", outs)
+	}
 }
 
 // A forced replace that fails after moving the copy aside puts it back, so nothing is lost or hidden.

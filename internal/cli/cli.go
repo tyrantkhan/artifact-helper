@@ -315,7 +315,11 @@ func addOptionFlags(fs *flag.FlagSet, env *Env, opts *headless.Options) {
 		}
 		return err
 	})
-	fs.BoolVar(&opts.AllowShare, "allow-share", opts.AllowShare, "let share run (see artifact-helper help share)")
+	fs.BoolFunc("allow-share", "let share run (see artifact-helper help share)", func(v string) error {
+		on, err := headless.ParseSwitch(v)
+		opts.AllowShare = on
+		return err
+	})
 	// An empty value would switch the organization check off, so it is refused rather than taken.
 	fs.Func("organization", "the organization claude must be signed in to", func(v string) error {
 		v = strings.TrimSpace(v)

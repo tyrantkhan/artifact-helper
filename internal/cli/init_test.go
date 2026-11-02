@@ -627,6 +627,13 @@ func TestOptionFlagsReadLikeTheirVariables(t *testing.T) {
 	if _, _, errs := m.run("", "publish", p, "--verbose"); !strings.Contains(errs, "running") {
 		t.Fatalf("no log: %q", errs)
 	}
+	// --allow-share reads on and off words like its variable: a typo is refused, never taken as on.
+	if code, out, _ := m.run("", "share", link, "--org", "--allow-share=maybe"); code != 1 || refusalCode(t, out) != "invalid-args" {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	if code, out, _ := m.run("", "share", link, "--org", "--allow-share=yes"); code == 0 || refusalCode(t, out) == "share-disabled" {
+		t.Fatalf("--allow-share=yes did not turn sharing on: code=%d out=%s", code, out)
+	}
 	m.getenv["ARTIFACT_HELPER_VERBOSE"] = "maybe"
 	if code, out, _ := m.run("", "publish", p); code != 1 || refusalCode(t, out) != "invalid-env" {
 		t.Fatalf("code=%d out=%s", code, out)
