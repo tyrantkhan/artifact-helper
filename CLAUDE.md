@@ -35,6 +35,9 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 ## Facts learned the hard way
 
 - `claude --bare` disables OAuth, so a subscription login stops working; never pass it.
+- `claude -p` leaves the Artifact tool off unless `CLAUDE_CODE_ARTIFACT=1` (Claude Code's `sdk_default_off`);
+  the run then answers that the tool is not available. `run` sets it unless the environment already does, and
+  the fake claude fails without it, so every test checks it.
 - Every run passes `--permission-prompts none` so anything that would prompt is denied. The Artifact tool's
   `edits` argument needs a file-edit permission that this denies, so `edit` applies edits in Go and republishes.
 - A share is confirmed by the person on a card; the share run alone uses `bypassPermissions` and is gated

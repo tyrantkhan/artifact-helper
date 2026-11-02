@@ -854,3 +854,19 @@ func TestRefusalHelpers(t *testing.T) {
 		t.Fatalf("tail = %q", got)
 	}
 }
+
+func TestRunsTurnTheArtifactToolOn(t *testing.T) {
+	// The fake claude fails a run without the switch, as claude -p offers no Artifact tool then, so every run
+	// above also checks that it is passed. An explicit setting is the caller's to make.
+	if got := withArtifactTool([]string{"HOME=/h"}); !contains(got, "CLAUDE_CODE_ARTIFACT=1") {
+		t.Fatalf("env = %v", got)
+	}
+	if got := withArtifactTool([]string{"CLAUDE_CODE_ARTIFACT=0"}); len(got) != 1 {
+		t.Fatalf("env = %v", got)
+	}
+	bin, _ := fakeClaude(t, map[string]string{"": linkOK}, 0, nil)
+	_, err := Publish(context.Background(), Options{Claude: bin, Environ: append(os.Environ(), "CLAUDE_CODE_ARTIFACT=0")}, Request{Path: page(t, "p.html")})
+	if r := wantRefusal(t, err, "claude-failed"); !strings.Contains(r.Message, "no Artifact tool") {
+		t.Fatalf("message = %q", r.Message)
+	}
+}

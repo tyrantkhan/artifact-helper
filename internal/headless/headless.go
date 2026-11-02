@@ -45,6 +45,10 @@ const (
 	envBudget  = "ARTIFACT_HELPER_MAX_BUDGET_USD"
 	envShare   = "ARTIFACT_HELPER_ALLOW_SHARE"
 	envOrg     = "ARTIFACT_HELPER_ORGANIZATION"
+
+	// envArtifactTool is Claude Code's switch for the Artifact tool. claude -p leaves the tool off unless it is
+	// set, so a run would have nothing to call.
+	envArtifactTool = "CLAUDE_CODE_ARTIFACT"
 )
 
 // Refusal is an error the caller can act on: a stable code, what went wrong, and what to do about it.
@@ -1016,6 +1020,7 @@ func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, b
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = opts.Environ
+	cmd.Env = withArtifactTool(cmd.Environ())
 	cmd.Stdin = strings.NewReader("")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1037,6 +1042,16 @@ func run(ctx context.Context, opts Options, dir, tools, schema, prompt string, b
 			Fix: "try again, or raise " + envTimeout + " (for example 10m) if the file is large"}
 	}
 	return parseOutput(stdout.Bytes(), stderr.String(), runErr)
+}
+
+// withArtifactTool turns the Artifact tool on for the run, unless the environment already says either way.
+func withArtifactTool(env []string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, envArtifactTool+"=") {
+			return env
+		}
+	}
+	return append(env, envArtifactTool+"=1")
 }
 
 func orDot(dir string) string {
