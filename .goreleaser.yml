@@ -37,6 +37,11 @@ release:
   github:
     owner: tyrantkhan
     name: artifact-helper
+  # release-please leaves a draft; publishing it only once the binaries are attached keeps releases
+  # working when GitHub's immutable releases are on, and a failed run leaves a draft, not an empty release.
+  use_existing_draft: true
+  preflight:
+    fail_on_error: true
 
 notarize:
   macos:
