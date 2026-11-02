@@ -5,6 +5,9 @@ project_name: artifact-helper
 builds:
   - main: ./cmd/artifact-helper
     binary: artifact-helper
+    # Without the build machine's paths in the binary.
+    flags:
+      - -trimpath
     ldflags:
       - -s -w
       - -X github.com/tyrantkhan/artifact-helper/internal/cli.Version={{.Version}}

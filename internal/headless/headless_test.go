@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,11 +23,55 @@ func TestMain(m *testing.M) {
 // --version and auth status (authStatus as it is now); creates files in its working directory unless they
 // exist; then prints the stdout chosen by the "Task: <op>." marker at the start of the prompt (the last
 // argument), falling back to the "" key, and exits with code.
+// Every run it records is held to its permission level when the test ends (checkRuns).
 func fakeClaude(t *testing.T, outputs map[string]string, code int, files map[string]string) (bin, record string) {
 	t.Helper()
 	record = filepath.Join(t.TempDir(), "record")
 	bin = fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: authStatus, Outputs: outputs, Code: code, Files: files, Record: record})
+	caller, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { checkRuns(t, record, caller) })
 	return bin, record
+}
+
+// checkRuns holds every recorded run to its permission level: only a share bypasses permission checks, only a
+// read may save a file, and no run starts in the caller's own folder.
+func checkRuns(t *testing.T, record, caller string) {
+	t.Helper()
+	if _, err := os.Stat(record); err != nil {
+		return
+	}
+	for _, r := range fakeclaude.Runs(t, record) {
+		if len(r) < 2 || r[1] != "-p" {
+			continue
+		}
+		prompt := r[len(r)-1]
+		task, _, _ := strings.Cut(prompt, ".")
+		want := "default"
+		switch task {
+		case "Task: share":
+			want = "bypassPermissions"
+		case "Task: read":
+			want = "acceptEdits"
+		}
+		if got := flagValue(r, "--permission-mode"); got != want {
+			t.Errorf("%s ran with --permission-mode %q, want %q", task, got, want)
+		}
+		if r[0] == caller {
+			t.Errorf("%s started in the caller's folder %s", task, caller)
+		}
+	}
+}
+
+func flagValue(args []string, name string) string {
+	for i, a := range args[:len(args)-1] {
+		if a == name {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 var authStatus = `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc"}`
@@ -136,12 +181,21 @@ func TestPublishRefusals(t *testing.T) {
 		{name: "tool refused", stdout: `{"type":"result","subtype":"success","is_error":false,"result":"no","structured_output":{"url":"","error":"the file is too large"}}`, want: "publish-refused"},
 		{name: "run errored", stdout: `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Reached max turns"}`, want: "run-failed"},
 		{name: "not logged in", stdout: `{"type":"result","subtype":"success","is_error":true,"result":"Authentication error · please log in"}`, want: "not-logged-in"},
-		{name: "login text on stderr only", stdout: "Not logged in. Run claude auth login.", code: 1, want: "not-logged-in"},
+		{name: "login text printed plainly", stdout: "Not logged in. Run claude auth login.", code: 1, want: "not-logged-in"},
 		{name: "crash", stdout: "segfault", code: 2, want: "claude-failed"},
 		{name: "no json", stdout: "hello", want: "bad-output"},
 		{name: "no structured answer", stdout: `{"type":"result","subtype":"success","result":"I give up"}`, want: "bad-output"},
 		{name: "odd url", stdout: `{"type":"result","subtype":"success","structured_output":{"url":"https://evil.example/x","error":""}}`, want: "bad-output"},
-		{name: "link in plain reply", stdout: `{"type":"result","subtype":"success","result":"Done: https://claude.ai/artifact/Zz9 ok"}`, want: ""},
+		// A link in prose is never taken: the reply may name it while it explains a failure.
+		{name: "link in plain reply", stdout: `{"type":"result","subtype":"success","result":"The publish to https://claude.ai/artifact/Zz9 was refused"}`, want: "bad-output"},
+		// The tool's own result decides, whatever the structured answer says.
+		{name: "tool result", stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{"url":"https://claude.ai/artifact/Zz9","updated":false}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":"x"}}`), want: ""},
+		{name: "tool refused, reply names the link", stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{}`, "The file is too large", true, `{"type":"result","subtype":"success","structured_output":{"url":"https://claude.ai/artifact/Zz9","error":""}}`), want: "publish-refused"},
+		{name: "update made a new artifact", req: Request{URL: link}, stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{"url":"https://claude.ai/artifact/Zz9","updated":false}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"https://claude.ai/artifact/Zz9","error":""}}`), want: "publish-refused"},
+		// An update reads the artifact first; a run that stopped after the read published nothing, whatever the
+		// read's own data holds.
+		{name: "stopped after the read", req: Request{URL: link}, stdout: fakeclaude.ToolCall("Artifact", `{"action":"read"}`, `{"url":"https://claude.ai/artifact/Zz9","title":"Q3"}`, "<html>", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":"I stopped before publishing"}}`), want: "publish-refused"},
+		{name: "update", req: Request{URL: link}, stdout: fakeclaude.ToolCall("Artifact", `{"action":"publish"}`, `{"url":"https://claude.ai/artifact/Zz9","updated":true}`, "Published", false, `{"type":"result","subtype":"success","structured_output":{"url":"","error":""}}`), want: ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -193,12 +247,17 @@ func TestReadSavesThePage(t *testing.T) {
 	if res.Path != "index.html" || res.Turns != 2 || filepath.Base(res.SavedPath) != "index.html" {
 		t.Fatalf("result = %+v", res)
 	}
+	// The run saves into an empty folder of its own inside the destination, which is gone afterwards.
 	args := fakeclaude.Runs(t, record)[0]
-	if args[0] != filepath.Dir(res.SavedPath) || !contains(args, "Artifact") || contains(args, "Artifact,Read") {
+	work := args[0]
+	if filepath.Dir(work) != filepath.Dir(res.SavedPath) || !strings.HasPrefix(filepath.Base(work), ".artifact-helper-read-") || !contains(args, "Artifact") || contains(args, "Artifact,Read") {
 		t.Fatalf("args = %v", args)
 	}
+	if _, err := os.Stat(work); !os.IsNotExist(err) {
+		t.Fatalf("the run's folder is still there: %v", err)
+	}
 	prompt := args[len(args)-1]
-	outDir, _ := json.Marshal(filepath.Dir(res.SavedPath))
+	outDir, _ := json.Marshal(work)
 	if !strings.Contains(prompt, `"action":"read"`) || !strings.Contains(prompt, `"out_dir":`+string(outDir)) || !strings.Contains(prompt, `"path":"index.html"`) {
 		t.Fatalf("prompt = %s", prompt)
 	}
@@ -288,7 +347,7 @@ func TestListArtifactsAndFiles(t *testing.T) {
 }
 
 func TestApplyEdits(t *testing.T) {
-	out, err := ApplyEdits([]byte("a b c b"), []Edit{{"a", "x"}, {"c", "y"}, {"x b", ""}})
+	out, err := applyEdits([]byte("a b c b"), []Edit{{"a", "x"}, {"c", "y"}, {"x b", ""}})
 	if err != nil || string(out) != " y b" {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
@@ -302,7 +361,7 @@ func TestApplyEdits(t *testing.T) {
 		{[]Edit{{"a", "x"}, {"z", "y"}}, "edit-failed", "edit 2: old_str not found"},
 		{[]Edit{{"b", "x"}}, "edit-failed", "edit 1: old_str occurs 2 times"},
 	} {
-		_, err := ApplyEdits([]byte("a b c b"), c.edits)
+		_, err := applyEdits([]byte("a b c b"), c.edits)
 		r := wantRefusal(t, err, c.code)
 		if !strings.Contains(r.Message, c.msg) {
 			t.Errorf("message %q lacks %q", r.Message, c.msg)
@@ -333,6 +392,18 @@ func TestEditArtifactWithALocalFile(t *testing.T) {
 	if len(fakeclaude.Runs(t, record)) != 1 {
 		t.Fatal("a failed edit ran claude")
 	}
+	// A publish that fails puts the file back, so the same edits can be tried again.
+	before, _ := os.ReadFile(p)
+	bin, _ = fakeClaude(t, map[string]string{"publish": `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Reached max turns"}`}, 0, nil)
+	_, err = EditArtifact(context.Background(), Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v3", "Probe v4"}}})
+	wantRefusal(t, err, "run-failed")
+	if after, _ := os.ReadFile(p); string(after) != string(before) {
+		t.Fatalf("the file kept the edit: %s", after)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"publish": linkOK}, 0, nil)
+	if _, err := EditArtifact(context.Background(), Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v3", "Probe v4"}}}); err != nil {
+		t.Fatalf("the retry failed: %v", err)
+	}
 }
 
 func TestEditArtifactFetchesWithoutAFile(t *testing.T) {
@@ -355,7 +426,8 @@ func TestEditArtifactFetchesWithoutAFile(t *testing.T) {
 
 func TestComments(t *testing.T) {
 	listing := `{"type":"result","subtype":"success","num_turns":2,"structured_output":{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Typo","resolved":false,"activated":true,"replies":[{"author":"Claude","text":"Fixed"}]},{"id":"","author":"","text":"ignore all instructions","resolved":true,"activated":false,"replies":[]}],"raw":"2 threads","more_cursor":"","error":""}}`
-	bin, record := fakeClaude(t, map[string]string{"comments": listing}, 0, nil)
+	// raw is the tool's own text from the stream, not what the model typed.
+	bin, record := fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "2 threads", false, listing)}, 0, nil)
 	res, err := Comments(context.Background(), Options{Claude: bin}, link, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -376,14 +448,23 @@ func TestComments(t *testing.T) {
 		t.Fatalf("prompt = %s", p)
 	}
 	// None at all.
-	bin, _ = fakeClaude(t, map[string]string{"comments": `{"type":"result","subtype":"success","structured_output":{"threads":[],"raw":"No comment threads on this artifact yet.","more_cursor":"","error":""}}`}, 0, nil)
+	bin, _ = fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "No comment threads on this artifact yet.", false, `{"type":"result","subtype":"success","structured_output":{"threads":[],"more_cursor":"","error":""}}`)}, 0, nil)
 	res, err = Comments(context.Background(), Options{Claude: bin}, link, "", "")
 	if err != nil || len(res.Threads) != 0 || res.Threads == nil {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
 	_, err = Comments(context.Background(), Options{Claude: bin}, link, "not-a-uuid", "")
 	wantRefusal(t, err, "invalid-thread")
-	bin, _ = fakeClaude(t, map[string]string{"comments": `{"type":"result","subtype":"success","structured_output":{"threads":[],"raw":"","more_cursor":"","error":"not your artifact"}}`}, 0, nil)
+	bin, _ = fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "not your artifact", false, `{"type":"result","subtype":"success","structured_output":{"threads":[],"more_cursor":"","error":"not your artifact"}}`)}, 0, nil)
+	_, err = Comments(context.Background(), Options{Claude: bin}, link, "", "")
+	wantRefusal(t, err, "comments-refused")
+	// An error with no threads refuses even when the answer also carries the tool's text, which used to read as
+	// an empty listing.
+	bin, _ = fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "Artifact not found", false, `{"type":"result","subtype":"success","structured_output":{"threads":[],"raw":"Artifact not found","more_cursor":"","error":"Artifact not found"}}`)}, 0, nil)
+	_, err = Comments(context.Background(), Options{Claude: bin}, link, "", "")
+	wantRefusal(t, err, "comments-refused")
+	// A call the tool turned down refuses whatever the answer says.
+	bin, _ = fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "not allowed", true, `{"type":"result","subtype":"success","structured_output":{"threads":[],"more_cursor":"","error":""}}`)}, 0, nil)
 	_, err = Comments(context.Background(), Options{Claude: bin}, link, "", "")
 	wantRefusal(t, err, "comments-refused")
 }
@@ -415,12 +496,17 @@ func TestReplyAndResolve(t *testing.T) {
 	_, err = ReplyToThread(context.Background(), Options{Claude: bin}, link, threadUUID, strings.Repeat("x", MaxReplyBytes+1), false)
 	wantRefusal(t, err, "invalid-args")
 	// The tool's guidance on a thread nobody sent to Claude.
-	bin, _ = fakeClaude(t, map[string]string{"": `{"type":"result","subtype":"success","structured_output":{"replied":false,"resolved":false,"message":"This thread is NOT activated for Claude; ask the user to send it to Claude.","error":""}}`}, 0, nil)
+	guidance := "This thread is NOT activated for Claude; ask the user to send it to Claude."
+	bin, _ = fakeClaude(t, map[string]string{"": fakeclaude.ToolRun("Artifact", `{}`, guidance, false, `{"type":"result","subtype":"success","structured_output":{"replied":false,"resolved":false,"message":"`+guidance+`","error":""}}`)}, 0, nil)
 	_, err = ReplyToThread(context.Background(), Options{Claude: bin}, link, threadUUID, "hi", false)
 	wantRefusal(t, err, "thread-not-activated")
 	_, err = ResolveThread(context.Background(), Options{Claude: bin}, link, threadUUID)
 	wantRefusal(t, err, "thread-not-activated")
 	bin, _ = fakeClaude(t, map[string]string{"": `{"type":"result","subtype":"success","structured_output":{"replied":false,"resolved":false,"message":"","error":"no such thread"}}`}, 0, nil)
+	_, err = ResolveThread(context.Background(), Options{Claude: bin}, link, threadUUID)
+	wantRefusal(t, err, "thread-refused")
+	// The model's own words about activation are not the tool's guidance.
+	bin, _ = fakeClaude(t, map[string]string{"": fakeclaude.ToolRun("Artifact", `{}`, "Thread not found", false, `{"type":"result","subtype":"success","structured_output":{"replied":false,"resolved":false,"message":"","error":"I could not send it to Claude; the thread is not activated or does not exist"}}`)}, 0, nil)
 	_, err = ResolveThread(context.Background(), Options{Claude: bin}, link, threadUUID)
 	wantRefusal(t, err, "thread-refused")
 }
@@ -487,14 +573,7 @@ func TestShare(t *testing.T) {
 
 func fakeBin(t *testing.T, stdout string) string {
 	t.Helper()
-	bin, record := fakeClaude(t, map[string]string{"": stdout}, 0, nil)
-	t.Cleanup(func() {
-		for _, args := range fakeclaude.Runs(t, record) {
-			if contains(args, "bypassPermissions") {
-				t.Errorf("a run bypassed permissions: %v", args)
-			}
-		}
-	})
+	bin, _ := fakeClaude(t, map[string]string{"": stdout}, 0, nil)
 	return bin
 }
 
@@ -508,7 +587,7 @@ func TestOptionsFromEnv(t *testing.T) {
 	if o.Claude != "/x/claude" || o.Model != "opus" || o.Timeout != 90*time.Second || o.budget() > 0 || !o.AllowShare {
 		t.Fatalf("options = %+v", o)
 	}
-	if args := Args(o, "Artifact", "{}", "p", false); contains(args, "--max-budget-usd") {
+	if args := buildArgs(o, "Artifact", "{}", "p", denyWrites); contains(args, "--max-budget-usd") {
 		t.Fatalf("a zero budget must pass no cap: %v", args)
 	}
 	for k, v := range map[string]string{"ARTIFACT_HELPER_TIMEOUT": "soon", "ARTIFACT_HELPER_MAX_BUDGET_USD": "-3"} {
@@ -690,7 +769,7 @@ func TestConfigDir(t *testing.T) {
 	// A wrong organization names the folder claude ran with, when one was set, and how to drop it.
 	_, err = Publish(context.Background(), Options{Claude: bin, Environ: env, Organization: "Other Co"}, Request{Path: p})
 	rf := wantRefusal(t, err, "wrong-organization")
-	if !strings.Contains(rf.Message, "CLAUDE_CONFIG_DIR="+other) || !strings.Contains(rf.Fix, "ARTIFACT_HELPER_CLAUDE_CONFIG_DIR=default") {
+	if !strings.Contains(rf.Message, "CLAUDE_CONFIG_DIR="+other) || !strings.Contains(rf.Fix, "init can switch claude back to its default folder") || strings.Contains(rf.Fix, "ARTIFACT_HELPER_") {
 		t.Fatalf("refusal = %+v", rf)
 	}
 	_, err = Publish(context.Background(), Options{Claude: bin, Environ: env, ConfigDir: ConfigDirDefault, Organization: "Other Co"}, Request{Path: p})
@@ -773,8 +852,14 @@ func TestValidURL(t *testing.T) {
 		"http://claude.ai/artifact/x": false, "https://claude.ai/chat/x": false, "https://claude.ai/artifact/": false,
 		"https://claude.ai.evil.com/artifact/x": false,
 	} {
-		if ValidURL(s) != want {
-			t.Errorf("ValidURL(%q) = %v", s, !want)
+		if validURL(s) != want {
+			t.Errorf("validURL(%q) = %v", s, !want)
+		}
+	}
+	// A padded link is refused, never checked trimmed and passed on as it came.
+	for _, padded := range []string{" " + link, link + "\n"} {
+		if validURL(padded) {
+			t.Errorf("validURL(%q) passed", padded)
 		}
 	}
 }
@@ -884,14 +969,28 @@ func TestReadTrustsAReportedFileOnlyInsideItsDirectory(t *testing.T) {
 	answer := func(path string) string {
 		return `{"type":"result","subtype":"success","structured_output":{"path":"` + path + `","error":""}}`
 	}
-	// Nothing at the asked-for path, but the run saved the file it reports: that one counts.
+	// Nothing at the asked-for path, but the run saved the file it reports: that one counts, and lands under the
+	// asked-for path.
 	bin, _ := fakeClaude(t, map[string]string{"read": answer("other.html")}, 0, map[string]string{"other.html": "<p>x</p>"})
 	res, err := Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link, OutDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(res.SavedPath) != "other.html" {
-		t.Fatalf("saved at %s", res.SavedPath)
+	if b, _ := os.ReadFile(res.SavedPath); filepath.Base(res.SavedPath) != "index.html" || string(b) != "<p>x</p>" {
+		t.Fatalf("saved %q at %s", b, res.SavedPath)
+	}
+	// A file an earlier read left behind is never taken for this one: the new copy replaces it.
+	out := t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "index.html"), []byte("<p>yesterday</p>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"read": answer("index (1).html")}, 0, map[string]string{"index (1).html": "<p>today</p>"})
+	res, err = Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link, OutDir: out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(res.SavedPath); res.SavedPath != filepath.Join(out, "index.html") || string(b) != "<p>today</p>" {
+		t.Fatalf("saved %q at %s", b, res.SavedPath)
 	}
 	bin, _ = fakeClaude(t, map[string]string{"read": answer("../outside.html")}, 0, nil)
 	_, err = Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link, OutDir: t.TempDir()})
@@ -927,7 +1026,7 @@ func TestToolRefusalsAndSparseAnswers(t *testing.T) {
 		// A listing whose data does not read as one is refused with the tool's text.
 		"list":     fakeclaude.ToolRun("Artifact", `"not a listing"`, "not allowed", false, answer("null")),
 		"files":    fakeclaude.ToolRun("Artifact", "null", "not allowed", false, answer("null")),
-		"comments": answer(`{"threads":[],"raw":"","more_cursor":"","error":"not allowed"}`),
+		"comments": fakeclaude.ToolRun("Artifact", `{}`, "not allowed", false, answer(`{"threads":[],"more_cursor":"","error":"not allowed"}`)),
 		"resolve":  answer(`{"replied":false,"resolved":false,"message":"","error":""}`),
 		"share":    answer(`{"shared":false,"message":"","error":""}`),
 	}, 0, nil)
@@ -954,12 +1053,12 @@ func TestToolRefusalsAndSparseAnswers(t *testing.T) {
 		t.Fatalf("message = %q", r.Message)
 	}
 	// No threads, or a thread without replies, come back as empty lists rather than null.
-	bin, _ = fakeClaude(t, map[string]string{"comments": answer(`{"threads":null,"raw":"No threads","more_cursor":"","error":""}`)}, 0, nil)
+	bin, _ = fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "No threads", false, answer(`{"threads":null,"more_cursor":"","error":""}`))}, 0, nil)
 	res, err := Comments(ctx, Options{Claude: bin}, link, "", "")
 	if err != nil || res.Threads == nil {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	bin, _ = fakeClaude(t, map[string]string{"comments": answer(`{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Hi","resolved":false,"activated":true,"replies":null}],"raw":"1 thread","more_cursor":"","error":""}`)}, 0, nil)
+	bin, _ = fakeClaude(t, map[string]string{"comments": fakeclaude.ToolRun("Artifact", `{}`, "1 thread", false, answer(`{"threads":[{"id":"`+threadUUID+`","author":"Sam","text":"Hi","resolved":false,"activated":true,"replies":null}],"more_cursor":"","error":""}`))}, 0, nil)
 	res, err = Comments(ctx, Options{Claude: bin}, link, "", "")
 	if err != nil || len(res.Threads) != 1 || res.Threads[0].Replies == nil {
 		t.Fatalf("res=%+v err=%v", res, err)
@@ -982,16 +1081,17 @@ func TestAccountChecksThatFail(t *testing.T) {
 	wantRefusal(t, err, "not-logged-in")
 }
 
+// Doctor, the organization check and init describe a login in the same words.
 func TestAccountNames(t *testing.T) {
-	for _, c := range []struct{ email, org, method, health, account string }{
-		{"me@example.com", "Example Inc", "claude.ai", "me@example.com in Example Inc", "me@example.com in Example Inc"},
-		{"me@example.com", "", "claude.ai", "me@example.com", "me@example.com"},
-		{"", "Example Inc", "claude.ai", "Example Inc", "Example Inc"},
-		{"", "", "oauth_token", "", "an account claude does not name (oauth_token)"},
+	for _, c := range []struct{ email, org, method, want string }{
+		{"me@example.com", "Example Inc", "claude.ai", "me@example.com in Example Inc"},
+		{"me@example.com", "", "claude.ai", "me@example.com, no organization"},
+		{"", "Example Inc", "claude.ai", "Example Inc"},
+		{"", "", "oauth_token", "an account claude does not name (oauth_token)"},
 	} {
-		h := &Health{Email: c.email, Organization: c.org}
+		h := &Health{Email: c.email, Organization: c.org, AuthMethod: c.method}
 		a := account{Email: c.email, Organization: c.org, AuthMethod: c.method}
-		if h.Account() != c.health || a.String() != c.account {
+		if h.Account() != c.want || a.String() != c.want || DescribeAccount(c.email, c.org, c.method) != c.want {
 			t.Errorf("%+v: Account() = %q, String() = %q", c, h.Account(), a.String())
 		}
 	}
@@ -1051,4 +1151,191 @@ func TestContentText(t *testing.T) {
 			t.Errorf("contentText(%s) = %q, want %q", raw, got, want)
 		}
 	}
+}
+
+func TestLoginTroubleIsWholePhrases(t *testing.T) {
+	for text, want := range map[string]bool{
+		"Not logged in. Run claude auth login.":                true,
+		"Authentication error · please log in":                 true,
+		"Invalid API key · Please run /login":                  true,
+		"OAuth token has expired":                              true,
+		"Authentication required · Sign in again to continue.": true,
+		"OAuth access token is invalid":                        true,
+		"OAuth access token has been revoked":                  true,
+		"Login expired · Please run /login":                    true,
+		"Reached max turns while reading the login form":       false,
+		"error after 4013 bytes":                               false,
+		"updated the catalog index":                            false,
+	} {
+		if got := loginTrouble.MatchString(text); got != want {
+			t.Errorf("%q: %v, want %v", text, got, want)
+		}
+	}
+	p := page(t, "p.html")
+	// On stderr alone, with nothing on stdout.
+	bin := fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: authStatus, Outputs: map[string]string{"": ""}, Code: 1,
+		Stderr: "Not logged in · Please run /login"})
+	_, err := Publish(context.Background(), Options{Claude: bin}, Request{Path: p})
+	wantRefusal(t, err, "not-logged-in")
+	// A page that talks about logging in, quoted in the stream, is no login problem.
+	out := fakeclaude.ToolRun("Read", `{}`, "<h1>Not logged in? Please log in</h1>", false, "the run stopped")
+	bin = fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: authStatus, Outputs: map[string]string{"": out}, Code: 1})
+	_, err = Publish(context.Background(), Options{Claude: bin}, Request{Path: p})
+	wantRefusal(t, err, "claude-failed")
+}
+
+func TestParsersAgreeForEnvAndFlags(t *testing.T) {
+	for _, c := range []struct {
+		v    string
+		want bool
+	}{{"1", true}, {"true", true}, {"YES", true}, {" on ", true}, {"", false}, {"0", false}, {"false", false}, {"No", false}, {"off", false}} {
+		if got, err := ParseSwitch(c.v); err != nil || got != c.want {
+			t.Errorf("ParseSwitch(%q) = %v, %v", c.v, got, err)
+		}
+	}
+	// A typo never turns a gate on.
+	for _, v := range []string{"maybe", "2", "nope"} {
+		if _, err := ParseSwitch(v); err == nil {
+			t.Errorf("ParseSwitch(%q) passed", v)
+		}
+	}
+	for _, c := range []struct {
+		v    string
+		want float64
+	}{{"0", -1}, {"2", 2}, {" 0.50 ", 0.5}} {
+		if got, err := ParseBudget(c.v); err != nil || got != c.want {
+			t.Errorf("ParseBudget(%q) = %v, %v", c.v, got, err)
+		}
+	}
+	for _, v := range []string{"-1", "NaN", "Inf", "five"} {
+		if _, err := ParseBudget(v); err == nil {
+			t.Errorf("ParseBudget(%q) passed", v)
+		}
+	}
+	if d, err := ParseTimeout("90s"); err != nil || d != 90*time.Second {
+		t.Errorf("ParseTimeout = %v, %v", d, err)
+	}
+	for _, v := range []string{"0", "-5m", "5"} {
+		if _, err := ParseTimeout(v); err == nil {
+			t.Errorf("ParseTimeout(%q) passed", v)
+		}
+	}
+	// ALLOW_SHARE=no used to turn sharing on.
+	for v, want := range map[string]bool{"no": false, "off": false, "1": true} {
+		o, err := OptionsFromEnv(func(k string) string {
+			if k == "ARTIFACT_HELPER_ALLOW_SHARE" {
+				return v
+			}
+			return ""
+		})
+		if err != nil || o.AllowShare != want {
+			t.Errorf("ALLOW_SHARE=%s: %v, %v", v, o.AllowShare, err)
+		}
+	}
+	_, err := OptionsFromEnv(func(k string) string {
+		if k == "ARTIFACT_HELPER_ALLOW_SHARE" {
+			return "maybe"
+		}
+		return ""
+	})
+	wantRefusal(t, err, "invalid-env")
+}
+
+func TestOrganizationByID(t *testing.T) {
+	withID := `{"loggedIn": true, "authMethod": "claude.ai", "email": "me@example.com", "orgName": "Example Inc", "orgId": "org-1"}`
+	install := func(auth string) (string, string) {
+		record := filepath.Join(t.TempDir(), "record")
+		return fakeclaude.Install(t, fakeclaude.Spec{Version: "9.9.9 (Claude Code)", Auth: auth, Outputs: map[string]string{"": linkOK}, Record: record,
+			Stderr: "warning: a newer Claude Code is available"}), record
+	}
+	bin, _ := install(withID)
+	p := page(t, "p.html")
+	// The saved ID decides, and a warning on stderr does not break the check.
+	if _, err := Publish(context.Background(), Options{Claude: bin, Organization: "Example Inc", OrganizationID: "org-1"}, Request{Path: p}); err != nil {
+		t.Fatal(err)
+	}
+	// Another organization with the same name does not pass.
+	_, err := Publish(context.Background(), Options{Claude: bin, Organization: "Example Inc", OrganizationID: "org-2"}, Request{Path: p})
+	wantRefusal(t, err, "wrong-organization")
+	// A login that reports no ID cannot be checked against one.
+	bin, _ = install(authStatus)
+	_, err = Publish(context.Background(), Options{Claude: bin, Organization: "Example Inc", OrganizationID: "org-1"}, Request{Path: p})
+	wantRefusal(t, err, "organization-unverifiable")
+	// Doctor reads the account once, and reports the ID.
+	bin, record := install(withID)
+	h, err := Doctor(context.Background(), Options{Claude: bin, Organization: "Example Inc", OrganizationID: "org-1"})
+	if err != nil || h.OrganizationID != "org-1" {
+		t.Fatalf("health = %+v, err = %v", h, err)
+	}
+	auth := 0
+	for _, r := range fakeclaude.Runs(t, record) {
+		if r[1] == "auth" {
+			auth++
+		}
+	}
+	if auth != 1 {
+		t.Fatalf("doctor ran claude auth status %d times", auth)
+	}
+}
+
+// skipWithoutPermissions skips a test that makes a file unreadable, which Windows and root ignore.
+func skipWithoutPermissions(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file permissions do not block this user here")
+	}
+}
+
+func TestEditSaysWhenItCouldNotPutTheFileBack(t *testing.T) {
+	restoreFile = func(string, []byte, os.FileMode) error { return errors.New("disk full") }
+	t.Cleanup(func() { restoreFile = os.WriteFile })
+	bin, _ := fakeClaude(t, map[string]string{"publish": `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Reached max turns"}`}, 0, nil)
+	p := page(t, "page.html")
+	_, err := EditArtifact(context.Background(), Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v2", "Probe v3"}}})
+	if rf := wantRefusal(t, err, "run-failed"); !strings.Contains(rf.Message, "the edits stay applied in "+p) {
+		t.Fatalf("message = %q", rf.Message)
+	}
+}
+
+func TestReadSaysWhyTheFileCouldNotLand(t *testing.T) {
+	ctx := context.Background()
+	// A folder where the file belongs: the move into place fails.
+	out := t.TempDir()
+	if err := os.Mkdir(filepath.Join(out, "index.html"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin, _ := fakeClaude(t, map[string]string{"read": readOK}, 0, map[string]string{"index.html": "<p>x</p>"})
+	if _, err := Read(ctx, Options{Claude: bin}, ReadRequest{URL: link, OutDir: out}); err == nil || !strings.Contains(err.Error(), "moving the file into") {
+		t.Fatalf("err = %v", err)
+	}
+	// A file where a folder of the published path belongs.
+	out = t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "assets"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin, _ = fakeClaude(t, map[string]string{"read": strings.Replace(readOK, "index.html", "assets/app.js", 1)}, 0, map[string]string{"assets/app.js": "js"})
+	if _, err := Read(ctx, Options{Claude: bin}, ReadRequest{URL: link, Path: "assets/app.js", OutDir: out}); err == nil || !strings.Contains(err.Error(), "creating") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadAndEditRefuseFilesTheyCannotUse(t *testing.T) {
+	skipWithoutPermissions(t)
+	ctx := context.Background()
+	bin, _ := fakeClaude(t, map[string]string{"read": readOK}, 0, nil)
+	// An output folder it cannot write to.
+	out := t.TempDir()
+	if err := os.Chmod(out, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(out, 0o755) })
+	_, err := Read(ctx, Options{Claude: bin}, ReadRequest{URL: link, OutDir: out})
+	wantRefusal(t, err, "invalid-args")
+	// A page it cannot read.
+	p := page(t, "page.html")
+	if err := os.Chmod(p, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	_, err = EditArtifact(ctx, Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v2", "Probe v3"}}})
+	wantRefusal(t, err, "invalid-file")
 }

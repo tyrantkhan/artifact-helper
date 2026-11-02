@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -49,10 +48,10 @@ CLAUDE_CONFIG_DIR that is not an absolute path, which init cannot offer. Without
 terminal, a chosen folder with no login shows in "logins" as "loggedIn": false and is not refused.
 
 A refusal's code is not-logged-in when init is to save a folder with no login (with --save, or in a
-terminal), wrong-organization when
---organization names another organization than the account's, organization-unverifiable when the account
-names none, no-answer when a question got no answer, plugin-failed, or one doctor gives. Once the logins
-are known, a refusal still carries the result's fields, with "saved" saying whether the config was saved.
+terminal), wrong-organization when --organization names another organization than the account's,
+organization-unverifiable when the account names none, no-answer when a question got no answer,
+plugin-failed, or one doctor gives. Once the logins are known, a refusal still carries the result's fields,
+with "saved" saying whether the config was saved.
 `
 
 // login is who claude runs as with one config folder.
@@ -62,26 +61,21 @@ type login struct {
 	AuthMethod      string `json:"authMethod,omitempty"`
 	Email           string `json:"email,omitempty"`
 	Organization    string `json:"organization,omitempty"`
+	OrganizationID  string `json:"organizationId,omitempty"`
 }
 
 func (l login) account() string {
-	switch {
-	case !l.LoggedIn:
+	if !l.LoggedIn {
 		return "not signed in"
-	case l.Email != "" && l.Organization != "":
-		return l.Email + " in " + l.Organization
-	case l.Email != "":
-		return l.Email + ", no organization"
-	case l.Organization != "":
-		return l.Organization
 	}
-	return "an account claude does not name (" + l.AuthMethod + ")"
+	return headless.DescribeAccount(l.Email, l.Organization, l.AuthMethod)
 }
 
 type initResult struct {
 	Saved           bool    `json:"saved"`
 	Path            string  `json:"path"`
 	Organization    string  `json:"organization"`
+	OrganizationID  string  `json:"organizationId,omitempty"`
 	ClaudeConfigDir string  `json:"claudeConfigDir"`
 	Logins          []login `json:"logins"`
 	// UnusableConfigDir is an inherited CLAUDE_CONFIG_DIR that is not an absolute path, which init cannot save.
@@ -158,21 +152,7 @@ func cmdInit(env *Env, args []string) error {
 		return err
 	}
 	// A refusal after the logins are known keeps them, and says whether the config was saved.
-	rf, ok := headless.IsRefusal(err)
-	if !ok {
-		rf = &headless.Refusal{Code: "error", Message: err.Error()}
-		fmt.Fprintln(env.Stderr, "artifact-helper init: "+err.Error())
-	}
-	out := struct {
-		OK      bool   `json:"ok"`
-		Command string `json:"command"`
-		initResult
-		Error *headless.Refusal `json:"error"`
-	}{false, "init", *res, rf}
-	// Strings, booleans and slices of them always encode, as in writeError.
-	b, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Fprintln(env.Stdout, string(b))
-	return &exitError{code: 1}
+	return writeFailure(env, "init", res, err)
 }
 
 // runInit finds the logins, settles the folder and organization, and saves and installs as asked. Once the
@@ -191,7 +171,9 @@ func runInit(u *ui, interactive bool, opts headless.Options, path, envDir, flagD
 			dirs = append(dirs, d)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, stop := signalContext()
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	logins := make([]login, len(dirs))
 	for i, d := range dirs {
@@ -233,19 +215,19 @@ func runInit(u *ui, interactive bool, opts headless.Options, path, envDir, flagD
 	// the person which folder to use, and the plugin, which does not depend on that folder, still installs.
 	if !chosen.LoggedIn && (save || interactive) {
 		return res, &headless.Refusal{Code: "not-logged-in", Message: "claude is not signed in with config folder " + choice,
-			Fix: "run `claude auth login` (with CLAUDE_CONFIG_DIR set to that folder unless it is default), or pick another folder with --claude-config-dir"}
+			Fix: "tell the person; they can sign in there with `claude auth login` (with CLAUDE_CONFIG_DIR set to that folder unless it is default), or pick another folder"}
 	}
-	res.Organization = chosen.Organization
+	res.Organization, res.OrganizationID = chosen.Organization, chosen.OrganizationID
 	if opts.Organization != "" && chosen.LoggedIn {
 		if chosen.Organization == "" {
 			return res, &headless.Refusal{Code: "organization-unverifiable",
 				Message: fmt.Sprintf("--organization is %s, but config folder %s is signed in as %s, which names no organization, so it could never be checked", opts.Organization, choice, chosen.account()),
-				Fix:     "drop --organization, or sign in with `claude auth login` so claude reports the organization"}
+				Fix:     "tell the person; they can leave the organization out, or sign in with `claude auth login` so claude reports it"}
 		}
 		if !strings.EqualFold(opts.Organization, chosen.Organization) {
 			return res, &headless.Refusal{Code: "wrong-organization",
 				Message: fmt.Sprintf("--organization is %s, but config folder %s is signed in as %s", opts.Organization, choice, chosen.account()),
-				Fix:     "drop --organization to take the account's, or sign in with an account in " + opts.Organization}
+				Fix:     "tell the person; they can leave the organization out to take the account's, or sign in with an account in " + opts.Organization}
 		}
 	}
 
@@ -267,7 +249,7 @@ func runInit(u *ui, interactive bool, opts headless.Options, path, envDir, flagD
 		}
 	}
 	if doSave {
-		if err := saveConfig(path, config{Organization: res.Organization, ClaudeConfigDir: choice}); err != nil {
+		if err := saveConfig(path, config{Organization: res.Organization, OrganizationID: res.OrganizationID, ClaudeConfigDir: choice}); err != nil {
 			return res, err
 		}
 		res.Saved = true
@@ -298,10 +280,11 @@ func runInit(u *ui, interactive bool, opts headless.Options, path, envDir, flagD
 // probe asks claude who it runs as with config folder dir. Only not being signed in is an answer; any other
 // failure stops init.
 func probe(ctx context.Context, opts headless.Options, dir string) (login, error) {
-	opts.ConfigDir, opts.Organization = dir, ""
+	opts.ConfigDir, opts.Organization, opts.OrganizationID = dir, "", ""
 	h, err := headless.Doctor(ctx, opts)
 	if rf, ok := headless.IsRefusal(err); err != nil && (!ok || rf.Code != "not-logged-in" || h == nil) {
 		return login{}, err
 	}
-	return login{ClaudeConfigDir: dir, LoggedIn: h.LoggedIn, AuthMethod: h.AuthMethod, Email: h.Email, Organization: h.Organization}, nil
+	return login{ClaudeConfigDir: dir, LoggedIn: h.LoggedIn, AuthMethod: h.AuthMethod, Email: h.Email,
+		Organization: h.Organization, OrganizationID: h.OrganizationID}, nil
 }

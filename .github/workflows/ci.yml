@@ -17,8 +17,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: "go.mod"
       # gotestsum runs go test and also writes the results as JUnit XML, which Codecov's test analytics reads.
@@ -27,20 +27,21 @@ jobs:
         shell: bash
         run: go run gotest.tools/gotestsum@v1.13.0 --junitfile junit.xml -- -race -covermode=atomic -coverprofile=coverage.out ./...
       - run: go build -v ./cmd/artifact-helper
-      # Coverage is the same on every system, so one upload is enough. A failed upload, such as during a
-      # Codecov outage, does not fail the required test check.
+      # Every system uploads, flagged by system: some code runs on one system only, such as the Windows
+      # console check, and Codecov merges the uploads. A failed upload, such as during a Codecov outage, does
+      # not fail the required test check.
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.out
           disable_search: true
+          flags: ${{ matrix.os }}
       # Test results come from every system, flagged by system, and upload even when tests fail, which is
       # when they matter.
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results
@@ -52,8 +53,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: "go.mod"
       - name: Check go.mod tidiness
@@ -61,10 +62,14 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: shellcheck
-        run: shellcheck -s sh install.sh hooks/session-start .github/scripts/plugin-files.sh
+        run: |
+          shellcheck -s sh install.sh hooks/session-start .github/scripts/plugin-files.sh
+          shellcheck .github/scripts/check-pr-title-priority.sh .github/scripts/check-commit-types.sh
+      - name: Commit types agree
+        run: .github/scripts/check-commit-types.sh

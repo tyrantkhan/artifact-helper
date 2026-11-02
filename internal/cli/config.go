@@ -16,6 +16,9 @@ import (
 type config struct {
 	// Organization is the organization claude must be signed in to; empty checks none.
 	Organization string `json:"organization"`
+	// OrganizationID is that organization's ID, which every command checks in place of the name. A config
+	// saved before init recorded it checks the name.
+	OrganizationID string `json:"organizationId,omitempty"`
 	// ClaudeConfigDir is headless.ConfigDirDefault or the absolute path of a Claude Code config folder.
 	ClaudeConfigDir string `json:"claudeConfigDir"`
 }

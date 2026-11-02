@@ -35,3 +35,17 @@ func TestFind(t *testing.T) {
 		t.Fatal("Find(nope) found a skill")
 	}
 }
+
+func TestStubNameReadsOnlyTheFrontmatter(t *testing.T) {
+	for in, want := range map[string]string{
+		"---\nname: artifact-helper\n---\n# x\n":              "artifact-helper",
+		"\xef\xbb\xbf---\r\nname: artifact-helper\r\n---\r\n": "artifact-helper",
+		"---\ndescription: x\n---\nname: artifact-helper\n":   "",
+		"name: artifact-helper\n":                             "",
+		"---\nname: artifact-helper\n":                        "",
+	} {
+		if got := StubName([]byte(in)); got != want {
+			t.Errorf("StubName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

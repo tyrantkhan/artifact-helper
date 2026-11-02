@@ -43,6 +43,8 @@ type Spec struct {
 	// when the variable is not in its environment.
 	EnvRecord string
 	EnvName   string
+	// Stderr is printed on stderr by every invocation, auth status and plugin commands included.
+	Stderr string
 	// Plugin holds the stdout of each claude plugin command, keyed by its arguments after "plugin" joined with
 	// spaces, such as "list --json". A command not listed exits 1.
 	Plugin map[string]string
@@ -91,6 +93,9 @@ func (s Spec) run(args []string) (int, error) {
 			return 0, err
 		}
 	}
+	if s.Stderr != "" {
+		fmt.Fprintln(os.Stderr, s.Stderr)
+	}
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version":
@@ -114,6 +119,11 @@ func (s Spec) run(args []string) (int, error) {
 		return 0, errors.New("CLAUDE_CODE_ARTIFACT is not on, so claude -p would offer no Artifact tool")
 	}
 	time.Sleep(s.Sleep)
+	if len(s.Files) > 0 {
+		if err := inTempDir(); err != nil {
+			return 0, err
+		}
+	}
 	for name, content := range s.Files {
 		p := filepath.FromSlash(name)
 		if _, err := os.Stat(p); err == nil {
@@ -141,6 +151,26 @@ func (s Spec) run(args []string) (int, error) {
 	}
 	fmt.Println(out)
 	return s.Code, nil
+}
+
+// inTempDir refuses a run whose working directory is outside the temporary folder: there the Files it writes
+// would land in the source tree, as they once did.
+func inTempDir() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	rel, err := filepath.Rel(real(os.TempDir()), real(cwd))
+	if err != nil || !filepath.IsLocal(rel) {
+		return fmt.Errorf("refusing to write test files in %s, outside the temporary folder", cwd)
+	}
+	return nil
 }
 
 func (s Spec) recordEnv() error {
@@ -226,8 +256,13 @@ func Runs(t testing.TB, record string) [][]string {
 // result (JSON, "null" for none), and text, what the model was shown, marked as an error when isError. The
 // run then ended with result, its final result line.
 func ToolRun(tool, data, text string, isError bool, result string) string {
+	return ToolCall(tool, `{}`, data, text, isError, result)
+}
+
+// ToolCall is ToolRun with the call's input, such as {"action":"publish"}.
+func ToolCall(tool, input, data, text string, isError bool, result string) string {
 	use, err := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
-		map[string]any{"type": "tool_use", "id": "toolu_1", "name": tool, "input": map[string]any{}},
+		map[string]any{"type": "tool_use", "id": "toolu_1", "name": tool, "input": json.RawMessage(input)},
 	}}})
 	if err != nil {
 		panic(err)

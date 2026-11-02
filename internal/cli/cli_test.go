@@ -35,8 +35,24 @@ func run(t *testing.T, env map[string]string, stdin string, args ...string) (cod
 	t.Helper()
 	var out, errb bytes.Buffer
 	e := &Env{Args: args, Stdin: strings.NewReader(stdin), Stdout: &out, Stderr: &errb,
-		Getenv: func(k string) string { return env[k] }, Environ: func() []string { return nil }, Config: savedConfig(t, config{ClaudeConfigDir: "default"})}
+		Getenv: testGetenv(t, env), Environ: func() []string { return nil }, Config: savedConfig(t, config{ClaudeConfigDir: "default"})}
 	return Main(e), out.String(), errb.String()
+}
+
+// testGetenv reads env, and gives a test that names no claude one that does not exist, so no test ever
+// reaches the real claude on PATH, whatever order a command checks things in.
+func testGetenv(t *testing.T, env map[string]string) func(string) string {
+	t.Helper()
+	missing := filepath.Join(t.TempDir(), "no-claude-in-tests")
+	return func(k string) string {
+		if v, ok := env[k]; ok {
+			return v
+		}
+		if k == "ARTIFACT_HELPER_CLAUDE" {
+			return missing
+		}
+		return ""
+	}
 }
 
 // savedConfig writes c where init would, in a temporary folder, so no test reads or writes the real one.
@@ -106,7 +122,7 @@ func TestReadEditCommentsReplyResolve(t *testing.T) {
 	// own start in this one, so work from a temporary folder rather than the source tree.
 	t.Chdir(t.TempDir())
 	readOK := `{"type":"result","subtype":"success","num_turns":2,"structured_output":{"path":"index.html","error":""}}`
-	listing := `{"type":"result","subtype":"success","structured_output":{"threads":[{"id":"` + threadUUID + `","author":"Sam","text":"Typo","resolved":false,"activated":true,"replies":[]}],"raw":"1 thread","more_cursor":"","error":""}}`
+	listing := fakeclaude.ToolRun("Artifact", `{}`, "1 thread", false, `{"type":"result","subtype":"success","structured_output":{"threads":[{"id":"`+threadUUID+`","author":"Sam","text":"Typo","resolved":false,"activated":true,"replies":[]}],"more_cursor":"","error":""}}`)
 	threadOK := `{"type":"result","subtype":"success","structured_output":{"replied":true,"resolved":true,"message":"posted","error":""}}`
 	done := `{"type":"result","subtype":"success","result":"Listed."}`
 	files := fakeclaude.ToolRun("Artifact", `{"file_list":{"ver":"v1","files":[{"path":"assets/app.js"}]}}`, "Published files", false, done)
@@ -231,7 +247,8 @@ func TestRefusalsAreJSONOnStdout(t *testing.T) {
 		code, out, _ := run(t, c.env, "", c.args...)
 		res := result(t, out)
 		e, _ := res["error"].(map[string]any)
-		if code != 1 || res["ok"] != false || e["code"] != c.code || e["fix"] == "" {
+		// fix is omitted when empty, so a missing one decodes as nil: compare the string, not the field.
+		if fix, _ := e["fix"].(string); code != 1 || res["ok"] != false || e["code"] != c.code || fix == "" {
 			t.Errorf("%v: code=%d result=%+v", c.args, code, res)
 		}
 	}
@@ -255,7 +272,7 @@ func runMachine(t *testing.T, senv *skillinstall.Env, args ...string) (int, stri
 	t.Helper()
 	var out bytes.Buffer
 	e := &Env{Args: args, Stdin: strings.NewReader(""), Stdout: &out, Stderr: io.Discard,
-		Getenv: func(string) string { return "" }, Environ: func() []string { return nil }, Skills: senv,
+		Getenv: testGetenv(t, nil), Environ: func() []string { return nil }, Skills: senv,
 		Config: savedConfig(t, config{ClaudeConfigDir: "default"})}
 	return Main(e), out.String()
 }
@@ -349,7 +366,7 @@ func TestEveryCommandRefusesAnUnknownFlag(t *testing.T) {
 	for _, c := range commands() {
 		code, out, errs := run(t, nil, "", c.name, "--bogus")
 		e, _ := result(t, out)["error"].(map[string]any)
-		if code != 1 || e["code"] != "error" || !strings.Contains(errs, "flag provided but not defined") || !strings.Contains(errs, "Usage: artifact-helper "+c.name) {
+		if code != 1 || e["code"] != "invalid-args" || e["fix"] != "run artifact-helper help "+c.name || !strings.Contains(errs, "Usage: artifact-helper "+c.name) {
 			t.Errorf("%s: code=%d out=%q err=%q", c.name, code, out, errs)
 		}
 	}
@@ -410,5 +427,20 @@ func TestSummarizeCountsWhatHappened(t *testing.T) {
 	}
 	if got := (&exitError{code: 3}).Error(); got != "exit 3" {
 		t.Fatalf("Error() = %q", got)
+	}
+}
+
+func TestHelpAndLocalInstallWithASavedConfig(t *testing.T) {
+	// With a config saved, --help reaches the flag parser, which prints the usage.
+	if code, _, errs := run(t, nil, "", "publish", "--help"); code != 0 || !strings.HasPrefix(errs, "Usage: artifact-helper publish") {
+		t.Fatalf("code=%d err=%.60q", code, errs)
+	}
+	// With no injected machine, a local install looks up the current folder, and needs no home.
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	code, out, errs := run(t, nil, "", "install", "--local", "--dry-run")
+	if r := result(t, out); code != 0 || r["plan"].(map[string]any)["scope"] != "local" {
+		t.Fatalf("code=%d out=%s err=%s", code, out, errs)
 	}
 }

@@ -1,4 +1,5 @@
 # sha256 of every SKILL.md stub this project has shipped, one per line, LF line endings. A copy on disk whose
-# digest is listed, in a folder holding nothing else, is one of ours that nobody changed, so skills update may
-# rewrite it. Append the new digest whenever a stub changes; a test checks the current one is here.
+# digest is listed, in a folder holding nothing else, is one of ours that nobody changed, so install may
+# rewrite it and uninstall may remove it. Append the new digest whenever a stub changes; a test checks the current one is here.
 cfc9d7505742416003dc4f64865aaf93613b7ff2ecf6576cb4c25ed8990cea2d artifact-helper
+cdf0f0d646e2d9255d3a801c40d7ffd04156c8a480dc68bf69b6f5173a6c4b9f artifact-helper

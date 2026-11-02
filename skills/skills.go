@@ -25,7 +25,7 @@ type Skill struct {
 }
 
 //go:embed artifact-helper/SKILL.md
-var claudeArtifactHelperStub []byte
+var artifactHelperStub []byte
 
 //go:embed released-digests.txt
 var releasedDigests []byte
@@ -35,8 +35,8 @@ func All() []Skill {
 	return []Skill{{
 		Name:        "artifact-helper",
 		Description: "Publish, edit, share and answer comments on claude.ai artifacts through the human's Claude subscription.",
-		Stub:        claudeArtifactHelperStub,
-		Guide:       skillguides.ClaudeArtifactHelper,
+		Stub:        artifactHelperStub,
+		Guide:       skillguides.ArtifactHelper,
 		Released:    released("artifact-helper"),
 	}}
 }
@@ -72,16 +72,19 @@ func released(name string) []string {
 
 var nameLine = regexp.MustCompile(`(?m)^name:\s*(\S+)\s*$`)
 
-// StubName reads the name from a SKILL.md's frontmatter, or "" when it has none.
+// StubName reads the name from a SKILL.md's frontmatter, or "" when it has none. Only the frontmatter counts:
+// a name: line in the body is the page's text, not the skill's name.
 func StubName(content []byte) string {
-	head := content
-	if len(head) > 4096 {
-		head = head[:4096]
-	}
-	if !bytes.HasPrefix(bytes.TrimLeft(head, "\xef\xbb\xbf"), []byte("---")) {
+	body := bytes.ReplaceAll(bytes.TrimPrefix(content, []byte("\xef\xbb\xbf")), []byte("\r\n"), []byte("\n"))
+	rest, ok := bytes.CutPrefix(body, []byte("---\n"))
+	if !ok {
 		return ""
 	}
-	if m := nameLine.FindSubmatch(head); m != nil {
+	front, _, ok := bytes.Cut(rest, []byte("\n---"))
+	if !ok {
+		return ""
+	}
+	if m := nameLine.FindSubmatch(front); m != nil {
 		return string(m[1])
 	}
 	return ""
