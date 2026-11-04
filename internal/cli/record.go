@@ -29,7 +29,7 @@ type tracked struct {
 	// Files are the local copies of the page, each with the version it was published as or read at: the version
 	// a publish of that file goes over. A file belongs to one artifact at a time.
 	Files map[string]string `json:"files,omitempty"`
-	// Sessions are the Claude Code sessions that published or edited it, by CLAUDE_CODE_SESSION_ID.
+	// Sessions are the sessions that published or edited it, by ARTIFACT_HELPER_SESSION or CLAUDE_CODE_SESSION_ID.
 	Sessions       []string `json:"sessions,omitempty"`
 	OrganizationID string   `json:"organizationId,omitempty"`
 	// Version is the newest version this machine published or read.

@@ -27,13 +27,13 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - `cmd/artifact-helper` is `main`; `internal/cli` is the command table (an `Env` with injected stdio, every
   command prints one JSON object, a refusal is `{"ok": false, "error": {code, message, fix}}`).
-- `internal/cli/record.go` keeps `published.json` beside the config: each artifact this machine published or
-  read, keyed by link, with the local files holding its page (by real path) and the version each holds, the
-  sessions that published it (`CLAUDE_CODE_SESSION_ID`, which Claude Code sets for every command it runs), and
-  `movedTo` after `--new`. publish and edit resolve the link from it, so callers never manage links; `updates`
-  reports a session's artifacts from it. A publish passes the file's own version as `ExpectVersion`, so a read
-  of another copy cannot let a stale file through. A file with no version of its own, one the record lacks or one
-  published when the tool reported none, goes over the artifact's newest.
+- `internal/cli/record.go` keeps `published.json` beside the config: each artifact this machine published or read,
+  keyed by link, with the local files holding its page (by real path) and the version each holds, the sessions that
+  published it (`ARTIFACT_HELPER_SESSION`, else `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for every command
+  it runs), and `movedTo` after `--new`. publish and edit resolve the link from it, so callers never manage links;
+  `updates` reports a session's artifacts from it. A publish passes the file's own version as `ExpectVersion`, so a
+  read of another copy cannot let a stale file through. A file with no version of its own, one the record lacks or
+  one published when the tool reported none, goes over the artifact's newest.
 - `init` saves a config (`internal/cli/config.go`) that every command but `get-skill` and `init` requires
   (`not-initialized`); environment variables and flags override it. Tests MUST set `Env.Config` to a
   temporary path (`savedConfig`), so no test reads or writes the real one. `init` and `doctor` print a

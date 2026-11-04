@@ -570,6 +570,29 @@ func TestUpdatesSendsTheTextWhenThereIsSomethingToRead(t *testing.T) {
 	}
 }
 
+func TestAnotherHarnessNamesItsSession(t *testing.T) {
+	m, record := tracking(t)
+	// An agent on another platform names its own session, which wins over the one Claude Code sets.
+	m.getenv[envSession] = " orca-7 "
+	m.publish(t, record, firstLink, v1, page(t))
+	if e := m.record(t).byURL(firstLink); fmt.Sprint(e.Sessions) != "[orca-7]" {
+		t.Fatalf("record = %+v", e)
+	}
+	m.answer(t, record, map[string]string{"updates": fakeclaude.Calls(`{"type":"result","subtype":"success","result":"done"}`,
+		fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list"}`, Text: "listed", Data: `{"artifacts":[]}`},
+		fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + firstLink + `"}`, Text: "none", Data: `{"threads":[]}`})})
+	code, out, _ := m.run("", "updates")
+	if r := result(t, out); code != 0 || r["session"] != "orca-7" || len(r["artifacts"].([]any)) != 1 {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+	// Claude Code's own session then has none of them.
+	delete(m.getenv, envSession)
+	code, out, _ = m.run("", "updates")
+	if r := result(t, out); code != 0 || r["session"] != "session-1" || len(r["artifacts"].([]any)) != 0 {
+		t.Fatalf("code=%d out=%s", code, out)
+	}
+}
+
 func TestUpdatesChecksFiftyAtATime(t *testing.T) {
 	m, record := tracking(t)
 	if err := changeRecord(&Env{Config: m.config}, func(p *published) {
