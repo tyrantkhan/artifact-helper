@@ -512,11 +512,7 @@ const artifactDeleted = "<artifact-deleted"
 // notOwned explains a refused publish whose likely cause is the account: the tool refused a link this account
 // cannot write to, or the run's read found the artifact owned by another account. Reading another account's
 // page asks a permission no headless run can give, so the tool's refusal is often the only sign.
-func notOwned(cr *claudeResult, err error) error {
-	rf, isRefusal := IsRefusal(err)
-	if !isRefusal {
-		return err
-	}
+func notOwned(cr *claudeResult, rf *Refusal) error {
 	kept := *rf
 	if c, ok := lastArtifactCall(cr, "publish"); ok && c.IsError && strings.Contains(c.Text, artifactDeleted) {
 		kept.Message = "the account claude is signed in to cannot write to this artifact: it was deleted, or another account owns it; nothing was published"
@@ -528,7 +524,7 @@ func notOwned(cr *claudeResult, err error) error {
 		Owned *bool `json:"owned"`
 	}
 	if !ok || json.Unmarshal(c.Data, &data) != nil || data.Owned == nil || *data.Owned {
-		return err
+		return rf
 	}
 	kept.Message += "; the artifact belongs to another account than the one claude is signed in to"
 	kept.Fix = "tell the person; they can publish from the account that owns it, or, with their yes, publish a new artifact"
@@ -1728,7 +1724,7 @@ func decode(cr *claudeResult, v any) error {
 }
 
 // refused is the Refusal for a run whose Artifact call the tool turned down.
-func refused(what, toolMsg, reply string) error {
+func refused(what, toolMsg, reply string) *Refusal {
 	msg := strings.TrimSpace(toolMsg)
 	if msg == "" {
 		msg = strings.TrimSpace(reply)
