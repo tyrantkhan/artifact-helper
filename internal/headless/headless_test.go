@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -230,6 +231,24 @@ func TestPublishTimesOut(t *testing.T) {
 	wantRefusal(t, err, "timeout")
 	if time.Since(start) > 3*time.Second {
 		t.Fatalf("took %s, the child was not stopped", time.Since(start))
+	}
+}
+
+func TestAPublishBeforeATimeoutIsReported(t *testing.T) {
+	// The run published, then hung until it was stopped: the page is live, so the publish is reported.
+	published := fakeclaude.Calls("", fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`, Text: "Published",
+		Data: `{"url":"` + link + `","updated":false,"version":"1793629160-0a57"}`})
+	// The timeout leaves a slow runner time to start the fake and print.
+	bin := fakeclaude.Install(t, fakeclaude.Spec{Outputs: map[string]string{"publish": published}, Linger: 30 * time.Second})
+	res, err := Publish(context.Background(), Options{Claude: bin, Timeout: 2 * time.Second}, Request{Path: page(t, "p.html")})
+	if err != nil || res.URL != link || res.Version != "1793629160-0a57" || !strings.Contains(res.Warning, "did not finish") {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Stopped by a signal, the run exits non-zero before its result line: the publish is reported all the same.
+	bin = fakeclaude.Install(t, fakeclaude.Spec{Outputs: map[string]string{"publish": published}, Code: 1})
+	res, err = Publish(context.Background(), Options{Claude: bin}, Request{Path: page(t, "p.html")})
+	if err != nil || res.URL != link || !strings.Contains(res.Warning, "claude failed") {
+		t.Fatalf("res=%+v err=%v", res, err)
 	}
 }
 
@@ -1338,4 +1357,186 @@ func TestReadAndEditRefuseFilesTheyCannotUse(t *testing.T) {
 	}
 	_, err = EditArtifact(ctx, Options{Claude: bin}, EditRequest{URL: link, Path: p, Edits: []Edit{{"Probe v2", "Probe v3"}}})
 	wantRefusal(t, err, "invalid-file")
+}
+
+func TestPublishOnlyOverTheExpectedVersion(t *testing.T) {
+	ctx := context.Background()
+	p := page(t, "p.html")
+	done := `{"type":"result","subtype":"success","structured_output":{"url":"","error":"x"}}`
+	read := func(ver string, owned bool) fakeclaude.Call {
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read","url":"` + link + `"}`,
+			Data: fmt.Sprintf(`{"artifactRead":{"slug":"s","ver":%q},"owned":%v}`, ver, owned), Text: "[Artifact ...]"}
+	}
+	publish := func(ver string, refused bool) fakeclaude.Call {
+		data, text := fmt.Sprintf(`{"url":%q,"updated":true,"title":"Q3","version":%q}`, link, ver), "Published"
+		if refused {
+			data, text = `{}`, "This session hadn't viewed the live version of this artifact, so the publish was refused."
+		}
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish","url":"` + link + `"}`, Data: data, Text: text, IsError: refused}
+	}
+	req := Request{Path: p, URL: link, ExpectVersion: "1793629160-0a57"}
+	// The live version is someone else's: the run stops before publishing, and the read's own data says so.
+	bin, record := fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(done, read("1793699999-beef", true))}, 0, nil)
+	_, err := Publish(ctx, Options{Claude: bin}, req)
+	if rf := wantRefusal(t, err, "changed-elsewhere"); !strings.Contains(rf.Message, "1793699999-beef") || !strings.Contains(rf.Message, "1793629160-0a57") {
+		t.Fatalf("message = %q", rf.Message)
+	}
+	if prompt := fakeclaude.Runs(t, record)[0]; !strings.Contains(prompt[len(prompt)-1], `If it is not exactly "1793629160-0a57"`) {
+		t.Fatalf("prompt = %s", prompt[len(prompt)-1])
+	}
+	// The model's answer alone, with no read data, also refuses.
+	bin, _ = fakeClaude(t, map[string]string{"publish": `{"type":"result","subtype":"success","structured_output":{"url":"","error":"changed elsewhere: 1793699999-beef"}}`}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, req)
+	wantRefusal(t, err, "changed-elsewhere")
+	// Ours, but the tool had not counted the read: one retry in the same run goes through.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(done, read("1793629160-0a57", true), publish("", true), publish("1793700000-c0de", false))}, 0, nil)
+	res, err := Publish(ctx, Options{Claude: bin}, req)
+	if err != nil || !res.Retried || res.Version != "1793700000-c0de" || res.Title != "Q3" || !res.Updated {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Another account's artifact: the refusal says so, which is why the read did not count.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(`{"type":"result","subtype":"success","structured_output":{"url":"","error":"refused"}}`,
+		read("1793629160-0a57", false), publish("", true))}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, Request{Path: p, URL: link})
+	if rf := wantRefusal(t, err, "publish-refused"); !strings.Contains(rf.Message, "another account") {
+		t.Fatalf("message = %q", rf.Message)
+	}
+	// Another account's page as the live tool answers: the read needs a permission no run can give, and the
+	// publish is refused as deleted. The refusal says the account cannot write there, and that a new artifact
+	// needs the person's yes, rather than passing on the tool's advice to publish one.
+	denied := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read","url":"` + link + `"}`, Data: "null", IsError: true,
+		Text: "Permission for this tool use was denied. What required approval: Claude couldn't check who made this artifact."}
+	gone := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish","url":"` + link + `"}`, Data: "null", IsError: true,
+		Text: `<artifact-deleted url="` + link + `"/> the artifact you're updating was deleted, or you no longer have write access to it.`}
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(`{"type":"result","subtype":"success","structured_output":{"url":"","error":"refused"}}`,
+		denied, gone)}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, Request{Path: p, URL: link})
+	if rf := wantRefusal(t, err, "publish-refused"); !strings.Contains(rf.Message, "cannot write to this artifact") || !strings.Contains(rf.Fix, "only with their yes") {
+		t.Fatalf("refusal = %+v", rf)
+	}
+}
+
+func TestReadReportsTheVersion(t *testing.T) {
+	stream := fakeclaude.Calls(readOK, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read","url":"` + link + `"}`,
+		Data: `{"file_read":{"ver":"1793629160-0a57","path":"index.html"}}`, Text: "File saved"})
+	bin, _ := fakeClaude(t, map[string]string{"read": stream}, 0, map[string]string{"index.html": "<p>x</p>"})
+	res, err := Read(context.Background(), Options{Claude: bin}, ReadRequest{URL: link})
+	if err != nil || res.Version != "1793629160-0a57" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	os.RemoveAll(filepath.Dir(res.SavedPath))
+}
+
+func TestUpdatesReadsEverythingFromTheToolsData(t *testing.T) {
+	ctx := context.Background()
+	other := "https://claude.ai/artifact/Other1"
+	list := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list","scope":"all","limit":200}`,
+		Data: `{"artifacts":[{"title":"Q3","url":"` + link + `","updatedAt":"2026-11-02T14:19:20Z"}],"total":1}`, Text: "1 artifact"}
+	threads := `{"cursor":"c2","names":{"acct-1":"Sam"},"threads":[{"id":"t1","resolved":false,"claude_activated":true,` +
+		`"comments":[{"id":"c1","account":"acct-1","text":"Fix the typo","created_at":"2026-11-02T15:00:00Z","sent_to_claude":true,"awaiting_reply":true},` +
+		`{"id":"c2","account":"acct-1","role":"assistant","text":"","created_at":"2026-11-02T15:00:08Z"}]}]}`
+	comments := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + link + `"}`, Data: threads, Text: "1 thread"}
+	refused := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + other + `"}`, Data: `{}`, Text: "not your artifact", IsError: true}
+	done := `{"type":"result","subtype":"success","result":"done"}`
+	bin, record := fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, list, comments, refused)}, 0, nil)
+	res, err := Updates(ctx, Options{Claude: bin}, []string{link, other})
+	if err != nil || len(res.Artifacts) != 2 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	a, b := res.Artifacts[0], res.Artifacts[1]
+	if a.UpdatedAt != "2026-11-02T14:19:20Z" || !a.MoreThreads || len(a.Threads) != 1 || !a.Threads[0].Activated ||
+		a.Threads[0].Comments[0].Author != "Sam" || !a.Threads[0].Comments[0].AwaitingReply {
+		t.Fatalf("first = %+v", a)
+	}
+	// Claude's reply is marked as Claude's, and the text the data leaves out is in the tool's own listing.
+	if c := a.Threads[0].Comments; c[0].FromClaude || !c[1].FromClaude || a.Raw != "1 thread" {
+		t.Fatalf("first = %+v", a)
+	}
+	if b.UpdatedAt != "" || b.Error != "not your artifact" || len(b.Threads) != 0 {
+		t.Fatalf("second = %+v", b)
+	}
+	prompt := fakeclaude.Runs(t, record)[0]
+	if p := prompt[len(prompt)-1]; !strings.Contains(p, link) || !strings.Contains(p, other) || !strings.Contains(p, `"action":"list"`) {
+		t.Fatalf("prompt = %s", p)
+	}
+	// Nothing to check runs nothing; a bad link, a refused or missing listing refuse.
+	if res, err := Updates(ctx, Options{Claude: "/no/such/claude"}, nil); err != nil || len(res.Artifacts) != 0 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	_, err = Updates(ctx, Options{Claude: bin}, []string{"https://example.com/x"})
+	wantRefusal(t, err, "invalid-url")
+	bin, _ = fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list"}`, Data: `{}`, Text: "no", IsError: true})}, 0, nil)
+	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
+	wantRefusal(t, err, "updates-refused")
+	bin, _ = fakeClaude(t, map[string]string{"updates": done}, 0, nil)
+	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
+	wantRefusal(t, err, "bad-output")
+	bin, _ = fakeClaude(t, map[string]string{"updates": ""}, 1, nil)
+	_, err = Updates(ctx, Options{Claude: bin}, []string{link})
+	wantRefusal(t, err, "claude-failed")
+	// Comments the run skipped, or data the tool sent in another shape, leave that artifact with no threads. An
+	// author the names map lacks keeps the account id.
+	odd := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + other + `"}`, Data: `"unexpected"`, Text: "?"}
+	unnamed := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + link + `"}`, Text: "1 thread",
+		Data: `{"threads":[{"id":"t1","comments":[{"id":"c1","account":"acct-9","text":"Hi"}]}]}`}
+	third := "https://claude.ai/artifact/Third3"
+	bin, _ = fakeClaude(t, map[string]string{"updates": fakeclaude.Calls(done, list, unnamed, odd)}, 0, nil)
+	res, err = Updates(ctx, Options{Claude: bin}, []string{link, other, third})
+	if err != nil || res.Artifacts[0].Threads[0].Comments[0].Author != "acct-9" || len(res.Artifacts[1].Threads) != 0 ||
+		res.Artifacts[2].Error != "the run did not read this artifact's comments" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestCommentsWithoutAnAnswerRefuse(t *testing.T) {
+	bin, _ := fakeClaude(t, map[string]string{"comments": fakeclaude.Calls(`{"type":"result","subtype":"success","result":"x"}`,
+		fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments"}`, Data: `{}`, Text: "No threads."})}, 0, nil)
+	_, err := Comments(context.Background(), Options{Claude: bin}, link, "", "")
+	wantRefusal(t, err, "bad-output")
+}
+
+func TestPublishTrustsTheToolsOwnData(t *testing.T) {
+	ctx := context.Background()
+	const expected = "1793629160-0a57"
+	answer := `{"type":"result","subtype":"success","structured_output":{"url":"` + link + `","error":""}}`
+	read := func(data string) fakeclaude.Call {
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read"}`, Data: data, Text: "read"}
+	}
+	publish := func(data string) fakeclaude.Call {
+		return fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`, Data: data, Text: "Published"}
+	}
+	done := `{"url":"` + link + `","updated":true,"version":"1793700000-c0de"}`
+	req := Request{Path: page(t, "p.html"), URL: link, ExpectVersion: expected}
+
+	// The run published over a version it should have stopped at: the result says which.
+	bin, _ := fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, read(`{"artifactRead":{"ver":"1793650000-aaaa"}}`), publish(done))}, 0, nil)
+	res, err := Publish(ctx, Options{Claude: bin}, req)
+	if err != nil || res.Overwrote != "1793650000-aaaa" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// A read whose data is in another shape names no version, so nothing is said to be overwritten.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, read(`"unexpected"`), publish(done))}, 0, nil)
+	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.Overwrote != "" || res.Version != "1793700000-c0de" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// A call that names no action is a publish, as the tool treats it. The live model often leaves it out.
+	bare := fakeclaude.Call{Tool: "Artifact", Input: `{"file_path":"p.html","url":"` + link + `"}`, Data: done, Text: "Published"}
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, read(`{"artifactRead":{"ver":"`+expected+`"}}`), bare)}, 0, nil)
+	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.Version != "1793700000-c0de" || res.Overwrote != "" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// Publish data with no link leaves the run's answer to decide.
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(answer, publish(`{}`))}, 0, nil)
+	if res, err = Publish(ctx, Options{Claude: bin}, req); err != nil || res.URL != link || res.Version != "" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// A failed run whose publish the tool refused reports the refusal, not the failure.
+	failed := `{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"over budget"}`
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(failed, fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish"}`,
+		Data: "null", Text: "no such artifact", IsError: true})}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, req)
+	wantRefusal(t, err, "publish-refused")
+	if !LooksLikeLink(link) || LooksLikeLink("page.html") {
+		t.Fatal("LooksLikeLink")
+	}
 }

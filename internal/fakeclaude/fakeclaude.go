@@ -34,6 +34,7 @@ type Spec struct {
 	Outputs map[string]string
 	Code    int           // exit code of a run
 	Sleep   time.Duration // how long a run waits before answering
+	Linger  time.Duration // how long a run waits after answering, as one that hangs before it exits
 	// Files are created by every run in its working directory, by slash-separated relative path, unless they
 	// already exist.
 	Files map[string]string
@@ -150,6 +151,7 @@ func (s Spec) run(args []string) (int, error) {
 		}
 	}
 	fmt.Println(out)
+	time.Sleep(s.Linger)
 	return s.Code, nil
 }
 
@@ -274,4 +276,33 @@ func ToolCall(tool, input, data, text string, isError bool, result string) strin
 		panic(err)
 	}
 	return string(use) + "\n" + string(res) + "\n" + result
+}
+
+// Call is one tool call for Calls: the tool, its input, its own data, the text the model was shown, and
+// whether the tool refused it.
+type Call struct {
+	Tool, Input, Data, Text string
+	IsError                 bool
+}
+
+// Calls is a stream-json run that makes calls, in order, then ends with the result line result.
+func Calls(result string, calls ...Call) string {
+	var b strings.Builder
+	for i, c := range calls {
+		id := fmt.Sprintf("toolu_%d", i+1)
+		use, err := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+			map[string]any{"type": "tool_use", "id": id, "name": c.Tool, "input": json.RawMessage(c.Input)},
+		}}})
+		if err != nil {
+			panic(err)
+		}
+		res, err := json.Marshal(map[string]any{"type": "user", "tool_use_result": json.RawMessage(c.Data), "message": map[string]any{"content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": id, "is_error": c.IsError, "content": []any{map[string]any{"type": "text", "text": c.Text}}},
+		}}})
+		if err != nil {
+			panic(err)
+		}
+		b.WriteString(string(use) + "\n" + string(res) + "\n")
+	}
+	return b.String() + result
 }

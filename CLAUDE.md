@@ -27,6 +27,13 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
 
 - `cmd/artifact-helper` is `main`; `internal/cli` is the command table (an `Env` with injected stdio, every
   command prints one JSON object, a refusal is `{"ok": false, "error": {code, message, fix}}`).
+- `internal/cli/record.go` keeps `published.json` beside the config: each artifact this machine published or read,
+  keyed by link, with the local files holding its page (by real path) and the version each holds, the sessions that
+  published it (`ARTIFACT_HELPER_SESSION`, else `CLAUDE_CODE_SESSION_ID`, which Claude Code sets for every command
+  it runs), and `movedTo` after `--new`. publish and edit resolve the link from it, so callers never manage links;
+  `updates` reports a session's artifacts from it. A publish passes the file's own version as `ExpectVersion`, so a
+  read of another copy cannot let a stale file through. A file with no version of its own, one the record lacks or
+  one published when the tool reported none, goes over the artifact's newest.
 - `init` saves a config (`internal/cli/config.go`) that every command but `get-skill` and `init` requires
   (`not-initialized`); environment variables and flags override it. Tests MUST set `Env.Config` to a
   temporary path (`savedConfig`), so no test reads or writes the real one. `init` and `doctor` print a
@@ -57,6 +64,9 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
   in the headless tests holds every run to its permission level and folder.
 - A share is confirmed by the person on a card; the share run alone uses `bypassPermissions` and is gated
   behind `ARTIFACT_HELPER_ALLOW_SHARE`.
+- The Artifact tool refuses `delete` in any headless run, even with `bypassPermissions`: "Deleting an Artifact
+  needs the user's confirmation, and no one can answer it in this session" (checked on 2.1.316). That is why
+  there is no `delete` command; the guide sends the person to `/artifacts` (press d) or claude.ai.
 - Comments live in the Artifact tool as actions `comments`, `reply` and `resolve`. Claude Code 2.1.316 lists
   them under its `ArtifactComments` tool but still accepts them on `Artifact` (checked). Reply and resolve work
   only on a thread a person sent to Claude; the `not-activated` detection matches the tool's own text, whose
