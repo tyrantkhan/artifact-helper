@@ -121,7 +121,7 @@ artifact-helper share https://claude.ai/artifact/<id> --people sam@example.com -
 
 ## What the headless run can and cannot do
 
-Each run gets the `Artifact` tool (and `Read`, to publish a file) and a prompt that names the one call to make, with its arguments spelled out. It cannot run commands, edit files, browse, or load skills or MCP servers, and it keeps no transcript. Every run denies whatever would ask a person for permission, except a share, which skips permission checks for its one call and is therefore off until you turn it on. What it sends to Anthropic under your login is what any `claude -p` run would send: the file being published, or the page, listing or thread the Artifact tool returns; see [PRIVACY.md](PRIVACY.md). The artifact is private to your account until you share its link.
+Each run gets the `Artifact` tool (and `Read`, to publish a file) and a prompt that names the one call to make, with its arguments spelled out. It cannot run commands, edit files, browse, or load skills or MCP servers, and it keeps no transcript. Every run denies whatever would ask a person for permission, except a share, which skips permission checks for its one call and is therefore off until you turn it on. What it sends to Anthropic under your login is what any `claude -p` run would send: the file being published, or the page, listing or thread the Artifact tool returns; see [PRIVACY.md](PRIVACY.md). The artifact is private to your account until you share its link. A run cannot delete an artifact: Claude Code has you confirm every delete, and refuses one in any headless run. Delete from Claude Code's `/artifacts` list (select it and press d), or from the artifact's own menu on claude.ai.
 
 ## License
 

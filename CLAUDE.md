@@ -64,6 +64,9 @@ The module has no dependencies. Used from Claude Code only: there is no MCP serv
   in the headless tests holds every run to its permission level and folder.
 - A share is confirmed by the person on a card; the share run alone uses `bypassPermissions` and is gated
   behind `ARTIFACT_HELPER_ALLOW_SHARE`.
+- The Artifact tool refuses `delete` in any headless run, even with `bypassPermissions`: "Deleting an Artifact
+  needs the user's confirmation, and no one can answer it in this session" (checked on 2.1.316). That is why
+  there is no `delete` command; the guide sends the person to `/artifacts` (press d) or claude.ai.
 - Comments live in the Artifact tool as actions `comments`, `reply` and `resolve`. Claude Code 2.1.316 lists
   them under its `ArtifactComments` tool but still accepts them on `Artifact` (checked). Reply and resolve work
   only on a thread a person sent to Claude; the `not-activated` detection matches the tool's own text, whose

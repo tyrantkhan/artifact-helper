@@ -27,6 +27,7 @@ Every command but `get-skill` prints one JSON object; a refusal has `"ok": false
 - You MUST NOT reply to or resolve a thread the listing does not mark as activated (sent to Claude); the tool refuses it with `thread-not-activated`. Tell the human which threads wait on them.
 - You MUST NOT resolve a thread you did not act on.
 - You MUST NOT run `share` unless the human asked to share, and you MUST tell them who it was shared with. When it refuses with `share-disabled`, tell the human that sharing is off in this install and that they can share from the artifact's Share menu on claude.ai. You MUST NOT turn sharing on yourself, with `--allow-share` or `ARTIFACT_HELPER_ALLOW_SHARE`.
+- The helper cannot delete an artifact. Claude Code's Artifact tool has the person confirm every delete, and refuses one in a headless run. When the human asks to delete an artifact, tell them to do it themselves, signed in to the account that owns it: from Claude Code's `/artifacts` list (select it and press d), or from the artifact's own menu on claude.ai. Deleting is for good.
 - A command takes under a minute and uses a few model turns of the human's subscription. Do not publish in a loop; republish when the page is ready.
 
 ## 1. Check the setup once
