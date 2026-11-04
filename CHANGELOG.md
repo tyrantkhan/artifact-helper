@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/tyrantkhan/artifact-helper/compare/v0.3.0...v0.3.1) (2026-11-04)
+
+
+### Features
+
+* keep each page's link, and report on a session's artifacts ([#23](https://github.com/tyrantkhan/artifact-helper/issues/23)) ([1f56ca5](https://github.com/tyrantkhan/artifact-helper/commit/1f56ca5a55d721c4432dc1ecaccd314cd7d26a09))
+
 ## [0.3.0](https://github.com/tyrantkhan/artifact-helper/compare/v0.2.1...v0.3.0) (2026-11-02)
 
 
