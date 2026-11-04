@@ -534,6 +534,42 @@ func TestUpdatesReportsThisSessionsArtifacts(t *testing.T) {
 	}
 }
 
+func TestUpdatesSendsTheTextWhenThereIsSomethingToRead(t *testing.T) {
+	m, record := tracking(t)
+	if err := changeRecord(&Env{Config: m.config}, func(p *published) {
+		p.Artifacts = append(p.Artifacts, &tracked{URL: firstLink, Sessions: []string{"session-1"}, Version: v1,
+			PublishedAt: "2026-11-01T00:00:00Z", Seen: []string{"c1"}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The data leaves the text out, as the live tool does; only the tool's own listing has it.
+	check := func(comments string) map[string]any {
+		t.Helper()
+		m.answer(t, record, map[string]string{"updates": fakeclaude.Calls(`{"type":"result","subtype":"success","result":"done"}`,
+			fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list"}`, Text: "listed", Data: `{"artifacts":[]}`},
+			fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + firstLink + `"}`, Text: "the listing",
+				Data: `{"threads":[{"id":"t1","resolved":false,"claude_activated":true,"comments":[` + comments + `]}]}`})})
+		code, out, _ := m.run("", "updates")
+		if code != 0 {
+			t.Fatalf("code=%d out=%s", code, out)
+		}
+		return result(t, out)["artifacts"].([]any)[0].(map[string]any)
+	}
+	// Nothing new and nothing waiting: no text to read, so none comes along.
+	if a := check(`{"id":"c1","account":"a1","text":""}`); a["raw"] != nil {
+		t.Fatalf("artifact = %v", a)
+	}
+	// Claude's new reply is new, and marked as Claude's, so the listing comes along.
+	a := check(`{"id":"c1","account":"a1","text":"","sent_to_claude":true},{"id":"c2","account":"a1","role":"assistant","text":""}`)
+	if n := a["newComments"].([]any); a["raw"] != "the listing" || len(n) != 1 || n[0].(map[string]any)["fromClaude"] != true {
+		t.Fatalf("artifact = %v", a)
+	}
+	// A thread waiting on Claude brings the listing too, though nothing in it is new.
+	if a := check(`{"id":"c1","account":"a1","text":"","sent_to_claude":true}`); a["raw"] != "the listing" || len(a["newComments"].([]any)) != 0 {
+		t.Fatalf("artifact = %v", a)
+	}
+}
+
 func TestUpdatesChecksFiftyAtATime(t *testing.T) {
 	m, record := tracking(t)
 	if err := changeRecord(&Env{Config: m.config}, func(p *published) {

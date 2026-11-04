@@ -1100,13 +1100,16 @@ Result:
   {"ok": true, "command": "updates", "session": "<id>", "artifacts": [{"url": "https://claude.ai/artifact/<id>",
    "title": "Q3 report", "files": {"/abs/page.html": "1793629160-0a57"}, "updatedAt": "2026-11-02T14:19:20Z",
    "changedElsewhere": false, "openThreads": 1, "waiting": ["<thread id>"],
-   "newComments": [{"thread": "<thread id>", "author": "Sam", "text": "..."}], "threads": [...]}],
+   "newComments": [{"thread": "<thread id>", "author": "<account>", "fromClaude": false}], "threads": [...],
+   "raw": "<the threads as the Artifact tool printed them>"}],
    "model": "sonnet", "turns": 3, "costUSD": 0.04, "durationMs": 9000}
 
 "files" are the local copies of the page this machine published or read, each with its version; publishing one
 goes over that version only. "changedElsewhere" is true when the live version is newer than any this machine
 published or read; a file then needs the live page merged in before it publishes. "movedTo" names the artifact
 the page was published to with --new. "waiting" lists the threads a writer sent to Claude that are not resolved.
+"fromClaude" marks a reply Claude posted. The tool's data leaves the comments' text out, so "raw" carries the
+threads as the tool printed them, text included, whenever there are new comments or waiting threads.
 `
 
 // artifactUpdate is what updates reports for one tracked artifact.
@@ -1122,13 +1125,15 @@ type artifactUpdate struct {
 	NewComments      []newComment          `json:"newComments"`
 	Threads          []headless.ThreadData `json:"threads"`
 	MoreThreads      bool                  `json:"moreThreads,omitempty"`
+	Raw              string                `json:"raw,omitempty"`
 	Error            string                `json:"error,omitempty"`
 }
 
 type newComment struct {
-	Thread string `json:"thread"`
-	Author string `json:"author"`
-	Text   string `json:"text"`
+	Thread     string `json:"thread"`
+	Author     string `json:"author"`
+	Text       string `json:"text,omitempty"`
+	FromClaude bool   `json:"fromClaude,omitempty"`
 }
 
 func cmdUpdates(env *Env, args []string) error {
@@ -1182,10 +1187,14 @@ func cmdUpdates(env *Env, args []string) error {
 		for _, th := range st.Threads {
 			for _, c := range th.Comments {
 				if !slices.Contains(t.Seen, c.ID) {
-					u.NewComments = append(u.NewComments, newComment{Thread: th.ID, Author: c.Author, Text: c.Text})
+					u.NewComments = append(u.NewComments, newComment{Thread: th.ID, Author: c.Author, Text: c.Text, FromClaude: c.FromClaude})
 				}
 				seen[t.URL] = append(seen[t.URL], c.ID)
 			}
+		}
+		// The comments' text is only in the tool's own listing, so it comes along when there is something to read.
+		if len(u.NewComments) > 0 || len(u.Waiting) > 0 {
+			u.Raw = st.Raw
 		}
 		out = append(out, u)
 	}

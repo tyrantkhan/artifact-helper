@@ -483,7 +483,7 @@ const changedMark = "changed elsewhere:"
 // changedElsewhere is the refusal for a publish over a version this machine has not seen.
 func changedElsewhere(req Request, live string) error {
 	return &Refusal{Code: "changed-elsewhere",
-		Message: fmt.Sprintf("someone published %s since this machine last did: the live version is %s, not %s; nothing was published", req.URL, live, req.ExpectVersion),
+		Message: fmt.Sprintf("%s changed after this file was published or read: the live version is %s, and the file holds %s; nothing was published", req.URL, live, req.ExpectVersion),
 		Fix:     "run artifact-helper read with the link to fetch the live page, merge your changes into that file, then publish it"}
 }
 
@@ -504,23 +504,34 @@ func liveVersion(cr *claudeResult) string {
 	return data.ArtifactRead.Ver
 }
 
-// notOwned adds to a refused publish that the run's read found the artifact owned by another account, the
-// likely reason: such a read returns a summary, which does not count as having seen the page.
+// artifactDeleted starts the Artifact tool's refusal of a publish to a link this account cannot write to: one
+// that was deleted, or one another account owns. Its text then advises publishing a new artifact, which changes
+// the link.
+const artifactDeleted = "<artifact-deleted"
+
+// notOwned explains a refused publish whose likely cause is the account: the tool refused a link this account
+// cannot write to, or the run's read found the artifact owned by another account. Reading another account's
+// page asks a permission no headless run can give, so the tool's refusal is often the only sign.
 func notOwned(cr *claudeResult, err error) error {
-	c, ok := lastArtifactCall(cr, "read")
 	rf, isRefusal := IsRefusal(err)
-	if !ok || !isRefusal {
-		return err
-	}
-	var data struct {
-		Owned *bool `json:"owned"`
-	}
-	if json.Unmarshal(c.Data, &data) != nil || data.Owned == nil || *data.Owned {
+	if !isRefusal {
 		return err
 	}
 	kept := *rf
+	if c, ok := lastArtifactCall(cr, "publish"); ok && c.IsError && strings.Contains(c.Text, artifactDeleted) {
+		kept.Message = "the account claude is signed in to cannot write to this artifact: it was deleted, or another account owns it; nothing was published"
+		kept.Fix = "tell the person. If another of their accounts owns it, they can publish from that one. Publishing without --url makes a new artifact with a new link, so do that only with their yes"
+		return &kept
+	}
+	c, ok := lastArtifactCall(cr, "read")
+	var data struct {
+		Owned *bool `json:"owned"`
+	}
+	if !ok || json.Unmarshal(c.Data, &data) != nil || data.Owned == nil || *data.Owned {
+		return err
+	}
 	kept.Message += "; the artifact belongs to another account than the one claude is signed in to"
-	kept.Fix = "tell the person; they can publish from the account that owns it, or publish a new artifact"
+	kept.Fix = "tell the person; they can publish from the account that owns it, or, with their yes, publish a new artifact"
 	return &kept
 }
 
@@ -1111,6 +1122,9 @@ type Status struct {
 	Threads []ThreadData `json:"threads"`
 	// MoreThreads is true when the tool listed only some of the threads.
 	MoreThreads bool `json:"moreThreads,omitempty"`
+	// Raw is the listing as the Artifact tool printed it. The tool's data leaves the comments' text out, so this
+	// is the only place it appears, framed by the tool as viewer data.
+	Raw string `json:"raw,omitempty"`
 	// Error is the tool's message when it would not list the threads.
 	Error string `json:"error,omitempty"`
 }
@@ -1125,12 +1139,15 @@ type ThreadData struct {
 
 // CommentData is one comment in a thread.
 type CommentData struct {
-	ID            string `json:"id"`
-	Author        string `json:"author"`
-	Text          string `json:"text"`
-	CreatedAt     string `json:"createdAt,omitempty"`
-	SentToClaude  bool   `json:"sentToClaude,omitempty"`
-	AwaitingReply bool   `json:"awaitingReply,omitempty"`
+	ID     string `json:"id"`
+	Author string `json:"author"`
+	// Text is empty when the tool's data leaves it out, as Claude Code 2.1.316 does; Status.Raw holds it then.
+	Text      string `json:"text,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	// FromClaude marks a reply Claude posted, which the tool attributes to the person it acted for.
+	FromClaude    bool `json:"fromClaude,omitempty"`
+	SentToClaude  bool `json:"sentToClaude,omitempty"`
+	AwaitingReply bool `json:"awaitingReply,omitempty"`
 }
 
 // UpdatesResult is what one updates run found.
@@ -1213,6 +1230,7 @@ func updatesRun(ctx context.Context, opts Options, urls []string) (*UpdatesResul
 			st.Error = tail(strings.TrimSpace(c.Text), 2000)
 		default:
 			st.Threads, st.MoreThreads = threadsFrom(c.Data)
+			st.Raw = c.Text
 		}
 		res.Artifacts = append(res.Artifacts, st)
 	}
@@ -1242,6 +1260,7 @@ func threadsFrom(data json.RawMessage) ([]ThreadData, bool) {
 			Comments        []struct {
 				ID            string `json:"id"`
 				Account       string `json:"account"`
+				Role          string `json:"role"`
 				Text          string `json:"text"`
 				CreatedAt     string `json:"created_at"`
 				SentToClaude  bool   `json:"sent_to_claude"`
@@ -1261,7 +1280,7 @@ func threadsFrom(data json.RawMessage) ([]ThreadData, bool) {
 				author = c.Account
 			}
 			th.Comments = append(th.Comments, CommentData{ID: c.ID, Author: author, Text: c.Text, CreatedAt: c.CreatedAt,
-				SentToClaude: c.SentToClaude, AwaitingReply: c.AwaitingReply})
+				FromClaude: c.Role == "assistant", SentToClaude: c.SentToClaude, AwaitingReply: c.AwaitingReply})
 		}
 		out = append(out, th)
 	}

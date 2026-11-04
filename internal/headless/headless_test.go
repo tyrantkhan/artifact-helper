@@ -1401,6 +1401,19 @@ func TestPublishOnlyOverTheExpectedVersion(t *testing.T) {
 	if rf := wantRefusal(t, err, "publish-refused"); !strings.Contains(rf.Message, "another account") {
 		t.Fatalf("message = %q", rf.Message)
 	}
+	// Another account's page as the live tool answers: the read needs a permission no run can give, and the
+	// publish is refused as deleted. The refusal says the account cannot write there, and that a new artifact
+	// needs the person's yes, rather than passing on the tool's advice to publish one.
+	denied := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"read","url":"` + link + `"}`, Data: "null", IsError: true,
+		Text: "Permission for this tool use was denied. What required approval: Claude couldn't check who made this artifact."}
+	gone := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"publish","url":"` + link + `"}`, Data: "null", IsError: true,
+		Text: `<artifact-deleted url="` + link + `"/> the artifact you're updating was deleted, or you no longer have write access to it.`}
+	bin, _ = fakeClaude(t, map[string]string{"publish": fakeclaude.Calls(`{"type":"result","subtype":"success","structured_output":{"url":"","error":"refused"}}`,
+		denied, gone)}, 0, nil)
+	_, err = Publish(ctx, Options{Claude: bin}, Request{Path: p, URL: link})
+	if rf := wantRefusal(t, err, "publish-refused"); !strings.Contains(rf.Message, "cannot write to this artifact") || !strings.Contains(rf.Fix, "only with their yes") {
+		t.Fatalf("refusal = %+v", rf)
+	}
 }
 
 func TestReadReportsTheVersion(t *testing.T) {
@@ -1420,7 +1433,8 @@ func TestUpdatesReadsEverythingFromTheToolsData(t *testing.T) {
 	list := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"list","scope":"all","limit":200}`,
 		Data: `{"artifacts":[{"title":"Q3","url":"` + link + `","updatedAt":"2026-11-02T14:19:20Z"}],"total":1}`, Text: "1 artifact"}
 	threads := `{"cursor":"c2","names":{"acct-1":"Sam"},"threads":[{"id":"t1","resolved":false,"claude_activated":true,` +
-		`"comments":[{"id":"c1","account":"acct-1","text":"Fix the typo","created_at":"2026-11-02T15:00:00Z","sent_to_claude":true,"awaiting_reply":true}]}]}`
+		`"comments":[{"id":"c1","account":"acct-1","text":"Fix the typo","created_at":"2026-11-02T15:00:00Z","sent_to_claude":true,"awaiting_reply":true},` +
+		`{"id":"c2","account":"acct-1","role":"assistant","text":"","created_at":"2026-11-02T15:00:08Z"}]}]}`
 	comments := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + link + `"}`, Data: threads, Text: "1 thread"}
 	refused := fakeclaude.Call{Tool: "Artifact", Input: `{"action":"comments","url":"` + other + `"}`, Data: `{}`, Text: "not your artifact", IsError: true}
 	done := `{"type":"result","subtype":"success","result":"done"}`
@@ -1432,6 +1446,10 @@ func TestUpdatesReadsEverythingFromTheToolsData(t *testing.T) {
 	a, b := res.Artifacts[0], res.Artifacts[1]
 	if a.UpdatedAt != "2026-11-02T14:19:20Z" || !a.MoreThreads || len(a.Threads) != 1 || !a.Threads[0].Activated ||
 		a.Threads[0].Comments[0].Author != "Sam" || !a.Threads[0].Comments[0].AwaitingReply {
+		t.Fatalf("first = %+v", a)
+	}
+	// Claude's reply is marked as Claude's, and the text the data leaves out is in the tool's own listing.
+	if c := a.Threads[0].Comments; c[0].FromClaude || !c[1].FromClaude || a.Raw != "1 thread" {
 		t.Fatalf("first = %+v", a)
 	}
 	if b.UpdatedAt != "" || b.Error != "not your artifact" || len(b.Threads) != 0 {
